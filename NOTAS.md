@@ -46,9 +46,12 @@ simplificou tudo:
 | Bebida dosada | cachaça, 1 garrafa — R$ 25,00 | 20 doses | R$ 1,25/dose |
 | Chopp | barril — R$ 400,00 | 150 copos | R$ 2,67/copo |
 | Revenda pura | long neck, 1 un — R$ 4,10 | 1 un | R$ 4,10/un |
+| **Mão de obra** | montador, 1 dia — R$ 100,00 | 50 pratos | R$ 2,00/prato |
 
-**Não crie estruturas separadas** para bebida e comida — a unificação é o que
-mantém o programa simples.
+**Não crie estruturas separadas** para bebida, comida e mão de obra — a
+unificação é o que mantém o programa simples. A mão de obra entrou como uma
+linha da mesma tabela `insumos`, com `tipo = 'Mão de obra'`, e é lançada na
+ficha técnica igual a um ingrediente: *1 prato de montador*.
 
 ## Decisões já tomadas (e por quê)
 
@@ -71,11 +74,27 @@ mantém o programa simples.
   a frase do que está faltando, e fora do ranking de margem.
 - **Faixas de CMV no `banco.py`** (`faixa_cmv` e `FAIXAS`): a cor 🟢🟡🔴 é
   regra de negócio, não decoração — as duas abas leem do mesmo lugar.
+- **Mão de obra fora do CMV, dentro do lucro**: o CMV continua sendo só de
+  insumos, senão o número deixa de ser comparável com os 30–35% que se falam
+  no ramo. A mão de obra tem coluna própria e sai do lucro. Como o custo
+  somado (*custo primário*) também precisa de uma régua, ele tem a sua —
+  `CUSTO_TOTAL_BOM`/`CUSTO_TOTAL_ATENCAO`, em torno de 60% e 70% — e o item
+  fica com a **pior** das duas notas. Assim um prato com CMV ótimo cai para 🟡
+  ou 🔴 quando a mão de obra come o que sobrava, com a frase *"a mão de obra
+  pesa no custo"* dizendo por quê.
+  → **Decisão em aberto**: o dono ainda não escolheu entre isso e somar tudo
+  em um número só. Como os dois valores ficam gravados separados, trocar é
+  mexer em `avaliar()` e mais nada.
+- **Duas abas, um cadastro só**: Insumos e Mão de obra usam a mesma classe
+  (`AbaCadastro`), mudando só os rótulos e as unidades. Duas telas porque na
+  cabeça dele são duas coisas; um código porque a conta é a mesma.
 
 ## Situação atual
 
 - ✅ `banco.py` — esquema, CRUD, custo, margem, CMV e simulação. **Sem interface**
 - ✅ Aba **Insumos** — cadastro com o custo real calculado ao vivo
+- ✅ Aba **Mão de obra** — montador, cozinheiro e quantos mais precisar, pela
+  mesma conta (R$ 100 por dia ÷ 50 pratos = R$ 2,00 por prato)
 - ✅ Aba **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
 - ✅ Aba **Análise** — ranking de margem, alerta de lucro baixo e a simulação
   "e se o insumo subir?"
@@ -90,9 +109,11 @@ frente é proteção do dado (backup, senha) e conveniência (impressão).
 2. ✅ **Preço e margem**: preço de venda, CMV % e margem com cores 🟢🟡🔴
 3. ✅ **Análise**: ranking por margem; ao mudar o preço de um insumo, listar os
    itens que ficaram com margem ruim (*o recurso mais valioso do programa*)
-4. Backup automático e senha (mesma solução do projeto Fluxo de Caixa)
-5. Impressão da ficha para a cozinha
-6. (Futuro) Self-service por quilo
+4. ✅ **Mão de obra**: cadastro próprio e lançamento na ficha; CMV, custo
+   primário e lucro separados na Análise
+5. Backup automático e senha (mesma solução do projeto Fluxo de Caixa)
+6. Impressão da ficha para a cozinha
+7. (Futuro) Self-service por quilo
 
 ### Como a aba Análise ficou
 

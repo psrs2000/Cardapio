@@ -5,13 +5,19 @@ Modelo (o coração do programa):
 
     insumo → preço de compra ÷ quantidade útil = CUSTO UNITÁRIO REAL
 
-Esse único conceito resolve os três casos do estabelecimento:
+Esse único conceito resolve todos os casos do estabelecimento — inclusive a
+mão de obra, que é a mesma conta:
 
     carne     : 1 kg por R$ 32,00  rende 700 g       → R$ 0,0457 por g
     cachaça   : 1 garrafa R$ 25,00 rende 20 doses    → R$ 1,25 por dose
     long neck : 1 un por R$ 4,10   rende 1 un        → R$ 4,10 por un
+    montador  : 1 dia por R$ 100   monta 50 pratos   → R$ 2,00 por prato
 
 A "quantidade útil" já embute a perda (limpeza, cozimento, espuma do chopp).
+Por isso mão de obra NÃO tem tabela própria: é uma linha de `insumos` com
+tipo = 'Mão de obra', e entra na ficha técnica como qualquer ingrediente.
+O que muda é só a leitura: o CMV continua sendo dos insumos (para bater com
+a régua de 30–35% do ramo) e a mão de obra sai do lucro.
 """
 
 import os
@@ -20,10 +26,27 @@ import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cardapio.db")
 
+# os dois tipos de custo — mesma tabela, mesma conta, leitura diferente
+TIPO_INSUMO = "Insumo"
+TIPO_MAO_OBRA = "Mão de obra"
+TIPOS = [TIPO_INSUMO, TIPO_MAO_OBRA]
+
 # unidades sugeridas nos combos da tela
 UNIDADES_COMPRA = ["kg", "g", "L", "ml", "un", "garrafa", "barril", "caixa",
                    "pacote", "maço", "dúzia"]
 UNIDADES_USO = ["g", "ml", "un", "dose", "copo", "fatia", "porção"]
+
+# mão de obra: compra-se tempo e "rende" itens prontos
+UNIDADES_COMPRA_MO = ["dia", "hora", "turno", "semana", "mês", "serviço"]
+UNIDADES_USO_MO = ["prato", "porção", "un", "item", "kg", "hora"]
+
+
+def unidades_de(tipo):
+    """(unidades de compra, unidades de uso) conforme o tipo de custo."""
+    if tipo == TIPO_MAO_OBRA:
+        return UNIDADES_COMPRA_MO, UNIDADES_USO_MO
+    return UNIDADES_COMPRA, UNIDADES_USO
+
 
 CATEGORIAS = ["Prato", "Porção", "Bebida", "Sobremesa", "Outro"]
 
@@ -45,7 +68,8 @@ def init_db():
             unidade_uso    TEXT    NOT NULL,
             qtd_util       REAL    NOT NULL DEFAULT 1,
             fornecedor     TEXT    DEFAULT '',
-            atualizado_em  TEXT    DEFAULT ''
+            atualizado_em  TEXT    DEFAULT '',
+            tipo           TEXT    NOT NULL DEFAULT 'Insumo'
         )""")
     con.execute("""
         CREATE TABLE IF NOT EXISTS itens (
@@ -63,6 +87,11 @@ def init_db():
             quantidade REAL    NOT NULL DEFAULT 0,
             UNIQUE(item_id, insumo_id)
         )""")
+    # banco criado antes da mão de obra: ganha a coluna sem perder nada
+    colunas = [c[1] for c in con.execute("PRAGMA table_info(insumos)")]
+    if "tipo" not in colunas:
+        con.execute("ALTER TABLE insumos ADD COLUMN tipo TEXT NOT NULL"
+                    " DEFAULT '%s'" % TIPO_INSUMO)
     con.commit()
     con.close()
 
@@ -116,6 +145,13 @@ def custo_unitario(preco_compra, qtd_util) -> float:
 CMV_BOM = 35.0
 CMV_ATENCAO = 45.0
 
+# Custo primário = insumos + mão de obra sobre o preço de venda. É outra régua,
+# mais folgada, porque agora a conta inclui a gente que faz. No ramo trabalha-se
+# com algo em torno de 60%; acima de 70% o item não se paga. Mexa aqui se a
+# realidade da casa for outra — é o único lugar onde esses números existem.
+CUSTO_TOTAL_BOM = 60.0
+CUSTO_TOTAL_ATENCAO = 70.0
+
 FAIXAS = {
     "bom":      {"sinal": "🟢", "rotulo": "Saudável",
                  "cor": "#1b5e20", "fundo": "#e8f5e9"},
@@ -126,6 +162,17 @@ FAIXAS = {
     "sem_dado": {"sinal": "⚪", "rotulo": "Faltam dados",
                  "cor": "#616161", "fundo": "#f5f5f5"},
 }
+
+
+def faixa_custo_total(custo_pct, tem_dados=True) -> str:
+    """Mesma ideia do CMV, na régua do custo primário (insumos + mão de obra)."""
+    if not tem_dados:
+        return "sem_dado"
+    if custo_pct <= CUSTO_TOTAL_BOM:
+        return "bom"
+    if custo_pct <= CUSTO_TOTAL_ATENCAO:
+        return "atencao"
+    return "ruim"
 
 
 def faixa_cmv(cmv, tem_dados=True) -> str:
@@ -144,11 +191,15 @@ def faixa_cmv(cmv, tem_dados=True) -> str:
 
 
 # ── insumos ───────────────────────────────────────────────────────
-def listar_insumos():
+def listar_insumos(tipo=None):
+    """Todos os custos cadastrados, ou só os de um tipo (Insumo / Mão de obra)."""
     con = conectar()
-    linhas = con.execute(
-        "SELECT id, nome, unidade_compra, preco_compra, unidade_uso, qtd_util,"
-        " fornecedor, atualizado_em FROM insumos ORDER BY nome").fetchall()
+    sql = ("SELECT id, nome, unidade_compra, preco_compra, unidade_uso, qtd_util,"
+           " fornecedor, atualizado_em, tipo FROM insumos")
+    if tipo:
+        linhas = con.execute(sql + " WHERE tipo=? ORDER BY nome", (tipo,)).fetchall()
+    else:
+        linhas = con.execute(sql + " ORDER BY tipo, nome").fetchall()
     con.close()
     return linhas
 
@@ -157,31 +208,32 @@ def obter_insumo(iid):
     con = conectar()
     r = con.execute(
         "SELECT id, nome, unidade_compra, preco_compra, unidade_uso, qtd_util,"
-        " fornecedor, atualizado_em FROM insumos WHERE id=?", (iid,)).fetchone()
+        " fornecedor, atualizado_em, tipo FROM insumos WHERE id=?",
+        (iid,)).fetchone()
     con.close()
     return r
 
 
 def salvar_insumo(iid, nome, unidade_compra, preco_compra, unidade_uso,
-                  qtd_util, fornecedor=""):
-    """Insere (iid=None) ou atualiza um insumo. Devolve o id."""
+                  qtd_util, fornecedor="", tipo=TIPO_INSUMO):
+    """Insere (iid=None) ou atualiza um insumo ou mão de obra. Devolve o id."""
     agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
     con = conectar()
     try:
         if iid:
             con.execute(
                 "UPDATE insumos SET nome=?, unidade_compra=?, preco_compra=?,"
-                " unidade_uso=?, qtd_util=?, fornecedor=?, atualizado_em=?"
-                " WHERE id=?",
+                " unidade_uso=?, qtd_util=?, fornecedor=?, atualizado_em=?,"
+                " tipo=? WHERE id=?",
                 (nome, unidade_compra, preco_compra, unidade_uso, qtd_util,
-                 fornecedor, agora, iid))
+                 fornecedor, agora, tipo, iid))
         else:
             cur = con.execute(
                 "INSERT INTO insumos (nome, unidade_compra, preco_compra,"
-                " unidade_uso, qtd_util, fornecedor, atualizado_em)"
-                " VALUES (?,?,?,?,?,?,?)",
+                " unidade_uso, qtd_util, fornecedor, atualizado_em, tipo)"
+                " VALUES (?,?,?,?,?,?,?,?)",
                 (nome, unidade_compra, preco_compra, unidade_uso, qtd_util,
-                 fornecedor, agora))
+                 fornecedor, agora, tipo))
             iid = cur.lastrowid
         con.commit()
     finally:
@@ -245,16 +297,16 @@ def listar_ficha(item_id):
     con = conectar()
     linhas = con.execute("""
         SELECT f.id, f.insumo_id, ins.nome, f.quantidade, ins.unidade_uso,
-               ins.preco_compra, ins.qtd_util
+               ins.preco_compra, ins.qtd_util, ins.tipo
           FROM ficha f JOIN insumos ins ON ins.id = f.insumo_id
          WHERE f.item_id = ?
-         ORDER BY ins.nome""", (item_id,)).fetchall()
+         ORDER BY ins.tipo, ins.nome""", (item_id,)).fetchall()
     con.close()
     saida = []
-    for fid, insumo_id, nome, qtd, un_uso, preco, qtd_util in linhas:
+    for fid, insumo_id, nome, qtd, un_uso, preco, qtd_util, tipo in linhas:
         cu = custo_unitario(preco, qtd_util)
         saida.append({"ficha_id": fid, "insumo_id": insumo_id, "insumo": nome,
-                      "quantidade": qtd, "unidade": un_uso,
+                      "quantidade": qtd, "unidade": un_uso, "tipo": tipo,
                       "custo_unitario": cu, "custo": cu * (qtd or 0)})
     return saida
 
@@ -276,21 +328,80 @@ def excluir_componente(ficha_id):
     con.close()
 
 
+def custos_do_item(item_id):
+    """{'insumos': x, 'mao_obra': y, 'total': x + y} de um item."""
+    parcial = {"insumos": 0.0, "mao_obra": 0.0}
+    for c in listar_ficha(item_id):
+        alvo = "mao_obra" if c["tipo"] == TIPO_MAO_OBRA else "insumos"
+        parcial[alvo] += c["custo"]
+    parcial["total"] = parcial["insumos"] + parcial["mao_obra"]
+    return parcial
+
+
 def custo_do_item(item_id) -> float:
-    return sum(c["custo"] for c in listar_ficha(item_id))
+    """Custo total do item — insumos mais mão de obra."""
+    return custos_do_item(item_id)["total"]
 
 
 def custos_por_item():
-    """{item_id: custo da ficha} — o cardápio inteiro em uma consulta só."""
+    """{item_id: {'insumos','mao_obra','total'}} — o cardápio em uma consulta."""
     con = conectar()
     linhas = con.execute("""
-        SELECT f.item_id,
+        SELECT f.item_id, ins.tipo,
                SUM(f.quantidade * ins.preco_compra /
                    CASE WHEN ins.qtd_util > 0 THEN ins.qtd_util END)
           FROM ficha f JOIN insumos ins ON ins.id = f.insumo_id
-         GROUP BY f.item_id""").fetchall()
+         GROUP BY f.item_id, ins.tipo""").fetchall()
     con.close()
-    return {iid: float(custo or 0.0) for iid, custo in linhas}
+    saida = {}
+    for iid, tipo, custo in linhas:
+        p = saida.setdefault(iid, {"insumos": 0.0, "mao_obra": 0.0, "total": 0.0})
+        alvo = "mao_obra" if tipo == TIPO_MAO_OBRA else "insumos"
+        p[alvo] += float(custo or 0.0)
+        p["total"] = p["insumos"] + p["mao_obra"]
+    return saida
+
+
+def _zerado():
+    return {"insumos": 0.0, "mao_obra": 0.0, "total": 0.0}
+
+
+def _pior(faixa_a, faixa_b) -> str:
+    ordem = ["bom", "atencao", "ruim"]
+    return faixa_a if ordem.index(faixa_a) >= ordem.index(faixa_b) else faixa_b
+
+
+def avaliar(preco, custo_insumos, custo_mao_obra=0.0):
+    """A régua do programa, num lugar só: como julgar um item.
+
+    O CMV é só de insumos — é assim que o número se compara com a régua de
+    30–35% do ramo, e é ele que aparece na coluna CMV. O custo com a mão de
+    obra junto é julgado por outra régua, a do custo primário, e vale a pior
+    das duas notas: um prato pode ter CMV ótimo e ficar 🟡 ou 🔴 porque a
+    mão de obra comeu o que sobrava.
+    """
+    preco = float(preco or 0)
+    custo_insumos = float(custo_insumos or 0)
+    custo_mao_obra = float(custo_mao_obra or 0)
+    total = custo_insumos + custo_mao_obra
+    margem = preco - total
+    cmv = (custo_insumos / preco * 100) if preco else 0.0
+    custo_pct = (total / preco * 100) if preco else 0.0
+    if preco <= 0:
+        situacao, faixa = "falta o preço de venda", "sem_dado"
+    elif total <= 0:
+        situacao, faixa = "falta montar a ficha", "sem_dado"
+    elif margem <= 0:
+        situacao, faixa = "o preço não cobre o custo", "ruim"
+    else:
+        faixa_insumos = faixa_cmv(cmv)
+        faixa = _pior(faixa_insumos, faixa_custo_total(custo_pct))
+        situacao = "a mão de obra pesa no custo" if faixa != faixa_insumos else ""
+    return {"custo_insumos": custo_insumos, "custo_mao_obra": custo_mao_obra,
+            "custo": total, "preco": preco, "margem": margem,
+            "margem_pct": (margem / preco * 100) if preco else 0.0,
+            "cmv": cmv, "custo_pct": custo_pct, "completo": faixa != "sem_dado",
+            "situacao": situacao, "faixa": faixa}
 
 
 def analise_itens():
@@ -302,41 +413,28 @@ def analise_itens():
     custos = custos_por_item()
     resultado = []
     for iid, nome, categoria, preco, _obs in listar_itens():
-        custo = custos.get(iid, 0.0)
-        preco = float(preco or 0)
-        margem = preco - custo
-        cmv = (custo / preco * 100) if preco else 0.0
-        if preco <= 0:
-            situacao = "falta o preço de venda"
-        elif custo <= 0:
-            situacao = "falta montar a ficha"
-        else:
-            situacao = ""
-        completo = not situacao
-        resultado.append({"id": iid, "nome": nome, "categoria": categoria,
-                          "custo": custo, "preco": preco, "margem": margem,
-                          "margem_pct": (margem / preco * 100) if preco else 0.0,
-                          "cmv": cmv, "completo": completo,
-                          "situacao": situacao,
-                          "faixa": faixa_cmv(cmv, completo)})
+        c = custos.get(iid, _zerado())
+        linha = {"id": iid, "nome": nome, "categoria": categoria}
+        linha.update(avaliar(preco, c["insumos"], c["mao_obra"]))
+        resultado.append(linha)
     return resultado
 
 
 def simular_preco_insumo(insumo_id, novo_preco):
-    """Como fica o cardápio se este insumo passar a custar outro preço.
+    """Como fica o cardápio se este custo passar a valer outro preço.
 
     Responde a pergunta mais valiosa do programa — "a carne subiu, quais
-    pratos ficaram com lucro ruim?" — sem gravar nada no banco.
-    Devolve uma linha por item que usa o insumo, com o antes e o depois,
-    do pior resultado para o melhor.
+    pratos ficaram com lucro ruim?" — sem gravar nada no banco. Serve igual
+    para mão de obra: "e se o montador passar a custar R$ 120 por dia?".
+    Devolve uma linha por item afetado, com o antes e o depois, do pior
+    resultado para o melhor.
     """
     ins = obter_insumo(insumo_id)
     if not ins:
         return []
-    _id, _nome, _un_compra, preco_atual, unidade_uso, qtd_util, _forn, _atu = ins
-    cu_antes = custo_unitario(preco_atual, qtd_util)
-    cu_depois = custo_unitario(novo_preco, qtd_util)
-    delta = cu_depois - cu_antes
+    _id, _nome, _un_compra, preco_atual, unidade_uso, qtd_util, _forn, _atu, tipo = ins
+    delta = custo_unitario(novo_preco, qtd_util) - custo_unitario(preco_atual, qtd_util)
+    alvo = "mao_obra" if tipo == TIPO_MAO_OBRA else "insumos"
 
     con = conectar()
     linhas = con.execute(
@@ -348,25 +446,20 @@ def simular_preco_insumo(insumo_id, novo_preco):
     custos = custos_por_item()
     saida = []
     for item_id, nome, categoria, preco_venda, qtd in linhas:
-        preco_venda = float(preco_venda or 0)
-        custo_antes = custos.get(item_id, 0.0)
-        custo_depois = custo_antes + delta * float(qtd or 0)
-        completo_antes = preco_venda > 0 and custo_antes > 0
-        completo_depois = preco_venda > 0 and custo_depois > 0
-        cmv_antes = (custo_antes / preco_venda * 100) if preco_venda else 0.0
-        cmv_depois = (custo_depois / preco_venda * 100) if preco_venda else 0.0
-        faixa_antes = faixa_cmv(cmv_antes, completo_antes)
-        faixa_depois = faixa_cmv(cmv_depois, completo_depois)
+        c = custos.get(item_id, _zerado())
+        depois = dict(c)
+        depois[alvo] = c[alvo] + delta * float(qtd or 0)
+        antes = avaliar(preco_venda, c["insumos"], c["mao_obra"])
+        dep = avaliar(preco_venda, depois["insumos"], depois["mao_obra"])
         saida.append({"id": item_id, "nome": nome, "categoria": categoria,
-                      "preco": preco_venda, "quantidade": float(qtd or 0),
-                      "unidade": unidade_uso,
-                      "custo_antes": custo_antes, "custo_depois": custo_depois,
-                      "margem_antes": preco_venda - custo_antes,
-                      "margem_depois": preco_venda - custo_depois,
-                      "cmv_antes": cmv_antes, "cmv_depois": cmv_depois,
-                      "faixa_antes": faixa_antes, "faixa_depois": faixa_depois,
-                      "piorou": faixa_depois == "ruim" and faixa_antes != "ruim"})
-    saida.sort(key=lambda l: (0 if l["cmv_depois"] else 1, -l["cmv_depois"],
+                      "preco": antes["preco"], "quantidade": float(qtd or 0),
+                      "unidade": unidade_uso, "tipo": tipo,
+                      "custo_antes": antes["custo"], "custo_depois": dep["custo"],
+                      "margem_antes": antes["margem"], "margem_depois": dep["margem"],
+                      "cmv_antes": antes["cmv"], "cmv_depois": dep["cmv"],
+                      "faixa_antes": antes["faixa"], "faixa_depois": dep["faixa"],
+                      "piorou": dep["faixa"] == "ruim" and antes["faixa"] != "ruim"})
+    saida.sort(key=lambda l: (0 if l["margem_depois"] else 1, l["margem_depois"],
                               l["nome"].lower()))
     return saida
 
@@ -375,6 +468,17 @@ def custo_unitario_do_insumo(insumo_id) -> float:
     """Custo real de 1 unidade de uso do insumo, como está gravado hoje."""
     ins = obter_insumo(insumo_id)
     return custo_unitario(ins[3], ins[5]) if ins else 0.0
+
+
+def itens_com_mao_de_obra(insumo_id=None):
+    """Quantos itens do cardápio já têm mão de obra lançada na ficha."""
+    con = conectar()
+    n = con.execute(
+        "SELECT COUNT(DISTINCT f.item_id) FROM ficha f"
+        "  JOIN insumos ins ON ins.id = f.insumo_id"
+        " WHERE ins.tipo = ?", (TIPO_MAO_OBRA,)).fetchone()[0]
+    con.close()
+    return n
 
 
 def itens_que_usam(insumo_id):

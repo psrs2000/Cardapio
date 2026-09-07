@@ -22,8 +22,11 @@ Um único conceito resolve cozinha e bar:
 | Cachaça | 1 garrafa — R$ 25,00 | 20 doses | **R$ 1,25/dose** |
 | Barril de chopp | 50 L — R$ 400,00 | 150 copos | **R$ 2,67/copo** |
 | Long neck | 1 un — R$ 4,10 | 1 unidade | **R$ 4,10/un** |
+| Montador | 1 dia — R$ 100,00 | 50 pratos montados | **R$ 2,00/prato** |
 
 A "quantidade útil" já embute a perda — limpeza, cozimento, espuma do chopp.
+E como a **mão de obra** obedece à mesma conta, ela entra na ficha técnica do
+prato igual a um ingrediente: *1 prato de montador, 1 prato de cozinheiro*.
 
 ## Como rodar
 
@@ -42,12 +45,17 @@ você mandar aplicar o preço.
 ## Situação atual
 
 - ✅ **Insumos** — cadastro com cálculo do custo real ao vivo
+- ✅ **Mão de obra** — montador, cozinheiro e quantos mais precisar
 - ✅ **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
 - ✅ **Análise** — ranking de margem, alerta dos itens com lucro baixo e a
   simulação de aumento de preço
 
-Cada item recebe uma cor pelo CMV — 🟢 até 35%, 🟡 até 45%, 🔴 acima disso.
-Item sem preço de venda ou sem ficha técnica fica em ⚪, dizendo o que falta.
+Cada item recebe uma cor pelo CMV — 🟢 até 35%, 🟡 até 45%, 🔴 acima disso. O
+CMV é só dos insumos, para se comparar com a régua do ramo; a mão de obra tem
+coluna própria e sai do lucro, sob uma régua mais folgada (o custo somado, até
+~60%). Vale a pior das duas notas, então um prato com CMV bom fica 🟡 ou 🔴 se
+a mão de obra comer o lucro. Item sem preço de venda ou sem ficha técnica fica
+em ⚪, dizendo o que falta.
 
 ## Arquivos
 

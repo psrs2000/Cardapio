@@ -33,60 +33,106 @@ def _btn(texto, cor, slot, largura=130):
 
 
 # ═══════════════════════════════════════════════════════════
-#  ABA INSUMOS
+#  ABA INSUMOS  e  ABA MÃO DE OBRA
+#  O mesmo cadastro serve aos dois: ambos são "preço ÷ quantidade
+#  útil". O que muda é só a conversa da tela.
 # ═══════════════════════════════════════════════════════════
-COLS_INSUMOS = ["id", "Insumo", "Compra", "Preço", "Rende", "Custo real", "Fornecedor"]
+ICONES_TIPO = {banco.TIPO_INSUMO: "🥕", banco.TIPO_MAO_OBRA: "👨‍🍳"}
+
+CFG_CADASTRO = {
+    banco.TIPO_INSUMO: {
+        "grupo": "Cadastro de Insumo",
+        "rotulos": ["Insumo:", "Comprado em:", "Preço de compra:", "Usado em:",
+                    "Rende quanto?:", "Fornecedor:"],
+        "ph_preco": "32,00",
+        "ph_qtd": "700",
+        "colunas": ["id", "Insumo", "Compra", "Preço", "Rende", "Custo real",
+                    "Fornecedor"],
+        "dica": ("<b>Como preencher o rendimento:</b><br><br>"
+                 "🥩 Carne: comprada em <b>kg</b> a R$ 32,00 que, limpa e pronta,<br>"
+                 "rende <b>700 g</b> → custo real por grama.<br><br>"
+                 "🥃 Destilado: 1 <b>garrafa</b> a R$ 25,00 rende <b>20 doses</b>.<br><br>"
+                 "🍺 Revenda (lata/long neck): comprado em <b>un</b>, rende <b>1</b>."),
+        "falta_nome": "Informe o nome do insumo.",
+        "erro_qtd": ("O rendimento deve ser maior que zero.\n"
+                     "Se for revenda (lata, long neck), use 1."),
+        "confirma": ("Atualizar este insumo?\n\n"
+                     "O custo de todos os itens que o usam será recalculado."),
+        "confirma_excluir": "Excluir este insumo?",
+        "sem_selecao": "Selecione um insumo na lista.",
+        "em_uso": "Não dá para excluir: este insumo é usado em",
+        "status": "%d insumos cadastrados",
+    },
+    banco.TIPO_MAO_OBRA: {
+        "grupo": "Cadastro de Mão de obra",
+        "rotulos": ["Mão de obra:", "Pago por:", "Quanto custa:", "Produz em:",
+                    "Faz quantos?:", "Observação:"],
+        "ph_preco": "100,00",
+        "ph_qtd": "50",
+        "colunas": ["id", "Mão de obra", "Pago por", "Custo", "Faz",
+                    "Custo real", "Observação"],
+        "dica": ("<b>É a mesma conta dos insumos:</b><br><br>"
+                 "👨‍🍳 <b>Montador</b>: custa <b>R$ 100,00</b> por <b>dia</b> e "
+                 "monta <b>50 pratos</b> por dia → R$ 2,00 por prato.<br><br>"
+                 "🔪 <b>Cozinheiro</b>: <b>R$ 150,00</b> por <b>dia</b> e dá conta "
+                 "de <b>60 pratos</b> → R$ 2,50 por prato.<br><br>"
+                 "Depois, na aba Cardápio, lance <b>1 prato</b> de cada um na "
+                 "ficha do item — igual a um ingrediente."),
+        "falta_nome": "Informe o nome da mão de obra (montador, cozinheiro…).",
+        "erro_qtd": ("Informe quantos ele faz no período pago — 50 pratos por "
+                     "dia, por exemplo.\nPrecisa ser maior que zero."),
+        "confirma": ("Atualizar esta mão de obra?\n\n"
+                     "O custo de todos os itens que a usam será recalculado."),
+        "confirma_excluir": "Excluir esta mão de obra?",
+        "sem_selecao": "Selecione uma mão de obra na lista.",
+        "em_uso": "Não dá para excluir: esta mão de obra é usada em",
+        "status": "%d tipos de mão de obra cadastrados",
+    },
+}
 
 
-class AbaInsumos(QWidget):
-    """Cadastro dos ingredientes/bebidas com o cálculo do custo real."""
+class AbaCadastro(QWidget):
+    """Cadastro de um tipo de custo, com o cálculo do custo real ao vivo."""
 
-    def __init__(self, ao_mudar=None):
+    def __init__(self, tipo, ao_mudar=None):
         super().__init__()
+        self._tipo = tipo
+        self._cfg = CFG_CADASTRO[tipo]
         self._edit_id = None
         self._ao_mudar = ao_mudar          # avisa as outras abas
         self._build()
         self.recarregar()
 
     def _build(self):
+        cfg = self._cfg
+        un_compra, un_uso = banco.unidades_de(self._tipo)
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 10, 12, 8)
 
-        grp = QGroupBox("Cadastro de Insumo")
+        grp = QGroupBox(cfg["grupo"])
         form = QGridLayout(grp)
         form.setSpacing(6)
         form.setColumnStretch(0, 1)
         form.setColumnStretch(5, 1)
 
         self._ed_nome = QLineEdit(); self._ed_nome.setFixedWidth(260)
-        self._cb_un_compra = QComboBox(); self._cb_un_compra.addItems(banco.UNIDADES_COMPRA)
+        self._cb_un_compra = QComboBox(); self._cb_un_compra.addItems(un_compra)
         self._cb_un_compra.setFixedWidth(110)
         self._ed_preco = QLineEdit(); self._ed_preco.setFixedWidth(110)
-        self._ed_preco.setPlaceholderText("32,00")
-        self._cb_un_uso = QComboBox(); self._cb_un_uso.addItems(banco.UNIDADES_USO)
+        self._ed_preco.setPlaceholderText(cfg["ph_preco"])
+        self._cb_un_uso = QComboBox(); self._cb_un_uso.addItems(un_uso)
         self._cb_un_uso.setFixedWidth(110)
         self._ed_qtd = QLineEdit(); self._ed_qtd.setFixedWidth(110)
-        self._ed_qtd.setPlaceholderText("700")
+        self._ed_qtd.setPlaceholderText(cfg["ph_qtd"])
         self._ed_forn = QLineEdit(); self._ed_forn.setFixedWidth(260)
 
-        linhas = [
-            ("Insumo:", self._ed_nome),
-            ("Comprado em:", self._cb_un_compra),
-            ("Preço de compra:", self._ed_preco),
-            ("Usado em:", self._cb_un_uso),
-            ("Rende quanto?:", self._ed_qtd),
-            ("Fornecedor:", self._ed_forn),
-        ]
-        for i, (rot, w) in enumerate(linhas):
+        campos = [self._ed_nome, self._cb_un_compra, self._ed_preco,
+                  self._cb_un_uso, self._ed_qtd, self._ed_forn]
+        for i, (rot, w) in enumerate(zip(cfg["rotulos"], campos)):
             form.addWidget(QLabel(rot), i, 1, Qt.AlignRight)
             form.addWidget(w, i, 2, Qt.AlignLeft)
 
-        dica = QLabel(
-            "<b>Como preencher o rendimento:</b><br><br>"
-            "🥩 Carne: comprada em <b>kg</b> a R$ 32,00 que, limpa e pronta,<br>"
-            "rende <b>700 g</b> → custo real por grama.<br><br>"
-            "🥃 Destilado: 1 <b>garrafa</b> a R$ 25,00 rende <b>20 doses</b>.<br><br>"
-            "🍺 Revenda (lata/long neck): comprado em <b>un</b>, rende <b>1</b>.")
+        dica = QLabel(cfg["dica"])
         dica.setWordWrap(True)
         dica.setFixedWidth(330)
         dica.setStyleSheet(
@@ -111,11 +157,11 @@ class AbaInsumos(QWidget):
         botoes.addWidget(_btn("Limpar", "#2196F3", self.limpar, 110))
         botoes.addWidget(_btn("Excluir", "#f44336", self._excluir, 110))
         botoes.addStretch()
-        form.addLayout(botoes, len(linhas), 1, 1, 2)
+        form.addLayout(botoes, len(cfg["rotulos"]), 1, 1, 2)
         root.addWidget(grp)
 
-        self._tab = QTableWidget(0, len(COLS_INSUMOS))
-        self._tab.setHorizontalHeaderLabels(COLS_INSUMOS)
+        self._tab = QTableWidget(0, len(cfg["colunas"]))
+        self._tab.setHorizontalHeaderLabels(cfg["colunas"])
         self._tab.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._tab.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._tab.setAlternatingRowColors(True)
@@ -146,31 +192,30 @@ class AbaInsumos(QWidget):
 
     # ── CRUD ──────────────────────────────────────────────
     def _salvar(self):
+        cfg = self._cfg
         nome = self._ed_nome.text().strip()
         if not nome:
-            QMessageBox.warning(self, "Atenção", "Informe o nome do insumo.")
+            QMessageBox.warning(self, "Atenção", cfg["falta_nome"])
             return
         try:
             preco = banco.parse_num(self._ed_preco.text())
             qtd = banco.parse_num(self._ed_qtd.text())
         except ValueError:
-            QMessageBox.warning(self, "Atenção", "Preço e rendimento devem ser números.")
+            QMessageBox.warning(self, "Atenção",
+                                "Preço e rendimento devem ser números.")
             return
         if qtd <= 0:
-            QMessageBox.warning(self, "Atenção",
-                                "O rendimento deve ser maior que zero.\n"
-                                "Se for revenda (lata, long neck), use 1.")
+            QMessageBox.warning(self, "Atenção", cfg["erro_qtd"])
             return
         if self._edit_id and QMessageBox.question(
-                self, "Confirmar", "Atualizar este insumo?\n\n"
-                "O custo de todos os itens que o usam será recalculado.",
+                self, "Confirmar", cfg["confirma"],
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         try:
             banco.salvar_insumo(self._edit_id, nome,
                                 self._cb_un_compra.currentText(), preco,
                                 self._cb_un_uso.currentText(), qtd,
-                                self._ed_forn.text().strip())
+                                self._ed_forn.text().strip(), self._tipo)
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Não foi possível salvar:\n{e}")
             return
@@ -180,18 +225,18 @@ class AbaInsumos(QWidget):
             self._ao_mudar()
 
     def _excluir(self):
+        cfg = self._cfg
         if not self._edit_id:
-            QMessageBox.information(self, "Info", "Selecione um insumo na lista.")
+            QMessageBox.information(self, "Info", cfg["sem_selecao"])
             return
-        if QMessageBox.question(self, "Confirmar", "Excluir este insumo?",
+        if QMessageBox.question(self, "Confirmar", cfg["confirma_excluir"],
                                 QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
         usos = banco.excluir_insumo(self._edit_id)
         if usos:
             QMessageBox.warning(
-                self, "Insumo em uso",
-                "Não dá para excluir: ele é usado em\n\n• " + "\n• ".join(usos) +
-                "\n\nRemova-o dessas fichas primeiro.")
+                self, "Em uso", cfg["em_uso"] + "\n\n• " + "\n• ".join(usos) +
+                "\n\nRemova das fichas primeiro.")
             return
         self.limpar()
         self.recarregar()
@@ -217,7 +262,7 @@ class AbaInsumos(QWidget):
         dados = banco.obter_insumo(self._edit_id)
         if not dados:
             return
-        _, nome, un_c, preco, un_u, qtd, forn, _ = dados
+        _, nome, un_c, preco, un_u, qtd, forn, _atu, _tipo = dados
         self._ed_nome.setText(nome)
         self._cb_un_compra.setCurrentText(un_c)
         self._ed_preco.setText(banco.fmt_num(preco))
@@ -227,9 +272,9 @@ class AbaInsumos(QWidget):
         self._btn_salvar.setText("Atualizar")
 
     def recarregar(self):
-        linhas = banco.listar_insumos()
+        linhas = banco.listar_insumos(self._tipo)
         self._tab.setRowCount(0)
-        for (iid, nome, un_c, preco, un_u, qtd, forn, _atu) in linhas:
+        for (iid, nome, un_c, preco, un_u, qtd, forn, _atu, _tipo) in linhas:
             i = self._tab.rowCount()
             self._tab.insertRow(i)
             cu = banco.custo_unitario(preco, qtd)
@@ -245,13 +290,14 @@ class AbaInsumos(QWidget):
                     it.setFont(QFont("Segoe UI", 9, QFont.Bold))
                 self._tab.setItem(i, j, it)
         self._tab.resizeColumnsToContents()
-        self._status.setText(f"{len(linhas)} insumos cadastrados")
+        self._status.setText(self._cfg["status"] % len(linhas))
 
 
 # ═══════════════════════════════════════════════════════════
 #  ABA CARDÁPIO  (ficha técnica)
 # ═══════════════════════════════════════════════════════════
-COLS_FICHA = ["ficha_id", "insumo_id", "Insumo", "Quantidade", "Custo unit.", "Custo"]
+COLS_FICHA = ["ficha_id", "insumo_id", "O que entra", "Quantidade",
+              "Custo unit.", "Custo"]
 
 
 class AbaCardapio(QWidget):
@@ -308,7 +354,7 @@ class AbaCardapio(QWidget):
             "font-size:15px;font-weight:bold;color:#1565C0;padding:4px;")
         dir_.addWidget(self._lbl_titulo)
 
-        grp_add = QGroupBox("Adicionar insumo à ficha")
+        grp_add = QGroupBox("Adicionar à ficha (insumo ou mão de obra)")
         ga = QHBoxLayout(grp_add)
         self._cb_insumo = QComboBox(); self._cb_insumo.setMinimumWidth(240)
         self._ed_qtd_uso = QLineEdit(); self._ed_qtd_uso.setFixedWidth(90)
@@ -316,7 +362,7 @@ class AbaCardapio(QWidget):
         self._lbl_un = QLabel("—"); self._lbl_un.setFixedWidth(50)
         self._lbl_un.setStyleSheet("color:#555;font-weight:bold;")
         self._cb_insumo.currentIndexChanged.connect(self._mostrar_unidade)
-        ga.addWidget(QLabel("Insumo:")); ga.addWidget(self._cb_insumo)
+        ga.addWidget(QLabel("O que entra:")); ga.addWidget(self._cb_insumo)
         ga.addWidget(QLabel("Qtd:")); ga.addWidget(self._ed_qtd_uso)
         ga.addWidget(self._lbl_un)
         ga.addWidget(_btn("Adicionar", "#00897B", self._add_componente, 110))
@@ -467,7 +513,9 @@ class AbaCardapio(QWidget):
         for c in comps:
             i = self._tab_ficha.rowCount()
             self._tab_ficha.insertRow(i)
-            vals = [str(c["ficha_id"]), str(c["insumo_id"]), c["insumo"],
+            icone = ICONES_TIPO.get(c["tipo"], "")
+            vals = [str(c["ficha_id"]), str(c["insumo_id"]),
+                    f"{icone} {c['insumo']}",
                     f"{banco.fmt_num(c['quantidade'], 2).rstrip('0').rstrip(',')} {c['unidade']}",
                     banco.fmt_moeda(c["custo_unitario"], 4),
                     banco.fmt_moeda(c["custo"])]
@@ -480,32 +528,38 @@ class AbaCardapio(QWidget):
         self._atualizar_painel()
 
     def _atualizar_painel(self):
-        custo = banco.custo_do_item(self._item_id)
+        c = banco.custos_do_item(self._item_id)
         try:
             preco = banco.parse_num(self._ed_preco_v.text())
         except ValueError:
             preco = 0.0
+        r = banco.avaliar(preco, c["insumos"], c["mao_obra"])
+        f = banco.FAIXAS[r["faixa"]]
+
+        partes = [f"Insumos <b>{banco.fmt_moeda(c['insumos'])}</b>"]
+        if c["mao_obra"]:
+            partes.append(f"Mão de obra <b>{banco.fmt_moeda(c['mao_obra'])}</b>")
+        if preco:
+            partes.append(f"Venda <b>{banco.fmt_moeda(preco)}</b>")
+        if r["completo"]:
+            partes.append(f"Lucro <b>{banco.fmt_moeda(r['margem'])}</b>")
+
         if not preco:
-            self._painel.setText(
-                f"Custo do item: <b>{banco.fmt_moeda(custo)}</b>"
-                "<br><span style='color:#888;font-size:12px'>"
-                "informe o preço de venda para ver a margem</span>")
-            self._painel.setStyleSheet(
-                "font-size:14px;padding:10px;border:2px solid #1565C0;"
-                "border-radius:8px;background:#f5f5f5;")
-            return
-        margem = preco - custo
-        cmv = custo / preco * 100
-        f = banco.FAIXAS[banco.faixa_cmv(cmv, custo > 0)]
-        if custo <= 0:
-            corpo = ("<span style='font-size:12px'>monte a ficha técnica para ver "
-                     "o custo e a margem</span>")
+            rodape = ("<span style='font-size:12px'>informe o preço de venda "
+                      "para ver a margem</span>")
+        elif c["total"] <= 0:
+            rodape = ("<span style='font-size:12px'>monte a ficha técnica para "
+                      "ver o custo e a margem</span>")
         else:
-            corpo = (f"Custo <b>{banco.fmt_moeda(custo)}</b> &nbsp;•&nbsp; "
-                     f"Margem <b>{banco.fmt_moeda(margem)}</b><br>"
-                     f"<span style='font-size:20px'>CMV {cmv:.1f}% {f['sinal']}</span>")
-        self._painel.setText(
-            f"Venda <b>{banco.fmt_moeda(preco)}</b> &nbsp;•&nbsp; {corpo}")
+            rodape = ("<span style='font-size:20px'>CMV "
+                      f"{banco.fmt_num(r['cmv'], 1)}% {f['sinal']}</span>")
+            if c["mao_obra"]:
+                rodape += ("<span style='font-size:12px'> &nbsp;•&nbsp; com a mão "
+                           "de obra, o custo é "
+                           f"{banco.fmt_num(r['custo_pct'], 0)}% do preço</span>")
+            if r["situacao"]:
+                rodape += f"<br><span style='font-size:12px'>{r['situacao']}</span>"
+        self._painel.setText(" &nbsp;•&nbsp; ".join(partes) + "<br>" + rodape)
         self._painel.setStyleSheet(
             f"font-size:14px;padding:10px;border:2px solid {f['cor']};"
             f"border-radius:8px;background:{f['fundo']};color:{f['cor']};")
@@ -516,10 +570,11 @@ class AbaCardapio(QWidget):
         atual = self._cb_insumo.currentData()
         self._cb_insumo.blockSignals(True)
         self._cb_insumo.clear()
-        for (iid, nome, _uc, preco, un_uso, qtd, _f, _a) in banco.listar_insumos():
+        for (iid, nome, _uc, preco, un_uso, qtd, _f, _a, tipo) in banco.listar_insumos():
             cu = banco.custo_unitario(preco, qtd)
             self._cb_insumo.addItem(
-                f"{nome}  ({banco.fmt_moeda(cu, 4)}/{un_uso})", (iid, un_uso))
+                f"{ICONES_TIPO.get(tipo, '')} {nome}  ({banco.fmt_moeda(cu, 4)}"
+                f"/{un_uso})", (iid, un_uso))
         if atual:
             for i in range(self._cb_insumo.count()):
                 if self._cb_insumo.itemData(i)[0] == atual[0]:
@@ -552,8 +607,8 @@ class AbaCardapio(QWidget):
 # ═══════════════════════════════════════════════════════════
 #  ABA ANÁLISE  (ranking de margem e simulação de aumento)
 # ═══════════════════════════════════════════════════════════
-COLS_ANALISE = ["id", "Item", "Categoria", "Custo", "Preço de venda",
-                "Lucro por unidade", "CMV", "Situação"]
+COLS_ANALISE = ["id", "Item", "Categoria", "Insumos", "Mão de obra",
+                "Preço de venda", "Lucro", "CMV", "Situação"]
 
 ORDENS = ["Pior margem primeiro", "Melhor margem primeiro",
           "Maior lucro em R$", "Nome do item"]
@@ -587,11 +642,13 @@ class DialogoSimulacao(QDialog):
         cu_antes = banco.custo_unitario_do_insumo(insumo_id)
         ins = banco.obter_insumo(insumo_id)
         unidade = ins[4] if ins else ""
+        tipo = ins[8] if ins else banco.TIPO_INSUMO
         cu_depois = banco.custo_unitario(novo_preco, ins[5]) if ins else 0.0
 
         topo = QLabel(
-            f"<b>{nome_insumo}</b> — compra de {banco.fmt_moeda(preco_atual)} "
-            f"para <b>{banco.fmt_moeda(novo_preco)}</b><br>"
+            f"{ICONES_TIPO.get(tipo, '')} <b>{nome_insumo}</b> — de "
+            f"{banco.fmt_moeda(preco_atual)} para "
+            f"<b>{banco.fmt_moeda(novo_preco)}</b><br>"
             f"custo por {unidade}: {banco.fmt_moeda(cu_antes, 4)} → "
             f"<b>{banco.fmt_moeda(cu_depois, 4)}</b>")
         topo.setStyleSheet(
@@ -617,9 +674,9 @@ class DialogoSimulacao(QDialog):
                     banco.fmt_moeda(l["custo_depois"]),
                     banco.fmt_moeda(l["margem_antes"]),
                     banco.fmt_moeda(l["margem_depois"]),
-                    f"{l['cmv_antes']:.1f}% {f_antes['sinal']}"
+                    f"{banco.fmt_num(l['cmv_antes'], 1)}% {f_antes['sinal']}"
                     if l["faixa_antes"] != "sem_dado" else f_antes["sinal"],
-                    f"{l['cmv_depois']:.1f}% {f_depois['sinal']}"
+                    f"{banco.fmt_num(l['cmv_depois'], 1)}% {f_depois['sinal']}"
                     if l["faixa_depois"] != "sem_dado" else f_depois["sinal"]]
             for j, v in enumerate(vals):
                 it = QTableWidgetItem(v)
@@ -642,7 +699,7 @@ class DialogoSimulacao(QDialog):
             aviso = "✅ Nenhum item passa para a faixa vermelha com esse preço."
             faixa = "bom"
         else:
-            aviso = "Esse insumo ainda não é usado em nenhuma ficha técnica."
+            aviso = "Isso ainda não é usado em nenhuma ficha técnica."
             faixa = "sem_dado"
         f = banco.FAIXAS[faixa]
         lbl = QLabel(aviso)
@@ -654,15 +711,15 @@ class DialogoSimulacao(QDialog):
 
         bl = QHBoxLayout()
         bl.addStretch()
-        bl.addWidget(_btn("Aplicar novo preço", "#4CAF50", self._aplicar, 180))
+        bl.addWidget(_btn("Aplicar novo custo", "#4CAF50", self._aplicar, 180))
         bl.addWidget(_btn("Fechar", "#2196F3", self.reject, 110))
         root.addLayout(bl)
 
     def _aplicar(self):
         if QMessageBox.question(
                 self, "Confirmar",
-                f"Gravar o novo preço de compra "
-                f"({banco.fmt_moeda(self._novo_preco)}) neste insumo?\n\n"
+                f"Gravar o novo custo "
+                f"({banco.fmt_moeda(self._novo_preco)})?\n\n"
                 "O custo de todos os itens que o usam será recalculado.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
@@ -670,10 +727,10 @@ class DialogoSimulacao(QDialog):
         if not ins:
             QMessageBox.warning(self, "Atenção", "Insumo não encontrado.")
             return
-        _id, nome, un_compra, _preco, un_uso, qtd_util, forn, _atu = ins
+        _id, nome, un_compra, _preco, un_uso, qtd_util, forn, _atu, tipo = ins
         try:
             banco.salvar_insumo(self._insumo_id, nome, un_compra, self._novo_preco,
-                                un_uso, qtd_util, forn or "")
+                                un_uso, qtd_util, forn or "", tipo)
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Não foi possível salvar:\n{e}")
             return
@@ -741,7 +798,8 @@ class AbaAnalise(QWidget):
         root.addWidget(dica)
 
         # ── simulação de aumento ──────────────────────────
-        grp = QGroupBox("A carne subiu? Veja o efeito antes de mudar o preço")
+        grp = QGroupBox("A carne subiu? O montador pediu aumento?"
+                        "  Veja o efeito antes de mudar o preço")
         gl = QHBoxLayout(grp)
         self._cb_insumo = QComboBox(); self._cb_insumo.setMinimumWidth(260)
         self._ed_novo = QLineEdit(); self._ed_novo.setFixedWidth(110)
@@ -750,8 +808,9 @@ class AbaAnalise(QWidget):
         self._lbl_atual = QLabel("—")
         self._lbl_atual.setStyleSheet("color:#555;font-size:12px;")
         self._cb_insumo.currentIndexChanged.connect(self._mostrar_preco_atual)
-        gl.addWidget(QLabel("Insumo:")); gl.addWidget(self._cb_insumo)
-        gl.addWidget(QLabel("Novo preço de compra:")); gl.addWidget(self._ed_novo)
+        gl.addWidget(QLabel("Insumo ou mão de obra:"))
+        gl.addWidget(self._cb_insumo)
+        gl.addWidget(QLabel("Novo custo:")); gl.addWidget(self._ed_novo)
         gl.addWidget(self._lbl_atual)
         gl.addWidget(_btn("Ver efeito", "#00897B", self._simular, 130))
         gl.addStretch()
@@ -783,20 +842,23 @@ class AbaAnalise(QWidget):
             f = banco.FAIXAS[l["faixa"]]
             i = self._tab.rowCount()
             self._tab.insertRow(i)
-            cmv = "—" if not l["completo"] else f"{l['cmv']:.1f}%"
+            cmv = "—" if not l["completo"] else f"{banco.fmt_num(l['cmv'], 1)}%"
             situacao = l["situacao"] or f"{f['sinal']} {f['rotulo']}"
             vals = [str(l["id"]), l["nome"], l["categoria"] or "",
-                    banco.fmt_moeda(l["custo"]) if l["custo"] > 0 else "—",
+                    banco.fmt_moeda(l["custo_insumos"])
+                    if l["custo_insumos"] > 0 else "—",
+                    banco.fmt_moeda(l["custo_mao_obra"])
+                    if l["custo_mao_obra"] > 0 else "—",
                     banco.fmt_moeda(l["preco"]) if l["preco"] > 0 else "—",
                     banco.fmt_moeda(l["margem"]) if l["completo"] else "—",
                     cmv, situacao]
             for j, v in enumerate(vals):
                 it = QTableWidgetItem(v)
-                if j in (3, 4, 5, 6):
+                if j in (3, 4, 5, 6, 7):
                     it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                if j in (5, 6, 7):
+                if j in (6, 7, 8):
                     it.setForeground(QBrush(QColor(f["cor"])))
-                if j in (6, 7):
+                if j in (7, 8):
                     it.setFont(QFont("Segoe UI", 9, QFont.Bold))
                 if l["faixa"] == "ruim":
                     it.setBackground(QBrush(QColor(f["fundo"])))
@@ -820,16 +882,17 @@ class AbaAnalise(QWidget):
     def _simular(self):
         iid = self._cb_insumo.currentData()
         if not iid:
-            QMessageBox.information(self, "Info", "Cadastre insumos na aba Insumos.")
+            QMessageBox.information(
+                self, "Info", "Cadastre algo nas abas Insumos ou Mão de obra.")
             return
         try:
             novo = banco.parse_num(self._ed_novo.text())
         except ValueError:
-            QMessageBox.warning(self, "Atenção", "O novo preço deve ser um número.")
+            QMessageBox.warning(self, "Atenção", "O novo custo deve ser um número.")
             return
         if novo <= 0:
             QMessageBox.warning(self, "Atenção",
-                                "Informe o novo preço de compra (maior que zero).")
+                                "Informe o novo custo (maior que zero).")
             return
         ins = banco.obter_insumo(iid)
         linhas = banco.simular_preco_insumo(iid, novo)
@@ -856,7 +919,7 @@ class AbaAnalise(QWidget):
         if ruins:
             f = banco.FAIXAS["ruim"]
             texto = ("⚠️ <b>Estes itens dão pouco lucro</b> (CMV acima de "
-                     f"{banco.CMV_ATENCAO:.0f}%): " + ", ".join(ruins))
+                     f"{banco.fmt_num(banco.CMV_ATENCAO, 0)}%): " + ", ".join(ruins))
         elif any(l["completo"] for l in self._dados):
             f = banco.FAIXAS["bom"]
             texto = "✅ Nenhum item com lucro baixo. O cardápio está saudável."
@@ -885,8 +948,10 @@ class AbaAnalise(QWidget):
         atual = self._cb_insumo.currentData()
         self._cb_insumo.blockSignals(True)
         self._cb_insumo.clear()
-        for (iid, nome, un_c, preco, _un_u, _qtd, _f, _a) in banco.listar_insumos():
-            self._cb_insumo.addItem(f"{nome}  ({banco.fmt_moeda(preco)}/{un_c})", iid)
+        for (iid, nome, un_c, preco, _un_u, _qtd, _f, _a, tipo) in banco.listar_insumos():
+            self._cb_insumo.addItem(
+                f"{ICONES_TIPO.get(tipo, '')} {nome}  "
+                f"({banco.fmt_moeda(preco)}/{un_c})", iid)
         if atual:
             i = self._cb_insumo.findData(atual)
             if i >= 0:
@@ -906,13 +971,17 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Cardápio — Ficha Técnica e Custo")
         self.resize(1150, 680)
 
-        self._aba_insumos = AbaInsumos(ao_mudar=self._atualizar_tudo)
+        self._aba_insumos = AbaCadastro(banco.TIPO_INSUMO,
+                                        ao_mudar=self._atualizar_tudo)
+        self._aba_mao_obra = AbaCadastro(banco.TIPO_MAO_OBRA,
+                                         ao_mudar=self._atualizar_tudo)
         self._aba_cardapio = AbaCardapio(ao_mudar=self._atualizar_tudo)
         self._aba_analise = AbaAnalise(ao_abrir_item=self._abrir_ficha,
                                        ao_mudar=self._atualizar_tudo)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(self._aba_insumos, "  Insumos  ")
+        self._tabs.addTab(self._aba_mao_obra, "  Mão de obra  ")
         self._tabs.addTab(self._aba_cardapio, "  Cardápio  ")
         self._tabs.addTab(self._aba_analise, "  Análise  ")
         self._tabs.currentChanged.connect(self._trocou_de_aba)
@@ -924,6 +993,7 @@ class MainWindow(QMainWindow):
     def _atualizar_tudo(self):
         """Mudou um insumo ou uma ficha: recalcula o que depende disso."""
         self._aba_insumos.recarregar()
+        self._aba_mao_obra.recarregar()
         self._aba_cardapio.recarregar()
         self._aba_analise.recarregar()
         self.statusBar().showMessage("Custos recalculados", 3000)
