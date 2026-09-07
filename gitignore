@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+cardapio.db
+build/
+dist/
+*.spec
