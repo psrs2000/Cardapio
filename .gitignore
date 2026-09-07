@@ -1,6 +1,13 @@
+# Dados locais e configuração do usuário
+cardapio.db
+config.json
+backups/
+
+# Python
 __pycache__/
 *.pyc
-cardapio.db
+
+# Build PyInstaller
 build/
 dist/
 *.spec

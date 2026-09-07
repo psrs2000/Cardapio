@@ -22,10 +22,35 @@ a régua de 30–35% do ramo) e a mão de obra sai do lucro.
 
 import os
 import re
+import sys
+import json
+import shutil
+import hashlib
 import sqlite3
 import datetime
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cardapio.db")
+
+def _app_dir() -> str:
+    """Pasta do .exe (quando compilado) ou do .py (em desenvolvimento).
+
+    Mesma solução do projeto Fluxo de Caixa: sem isto, o programa distribuído
+    como .exe procuraria o banco na pasta temporária do PyInstaller.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+DB_PATH = os.path.join(_app_dir(), "cardapio.db")
+
+# Senha e backup ficam em config.json, fora do banco, porque são configuração
+# da instalação e não do cardápio: têm de continuar valendo mesmo se o .db for
+# substituído por um backup. (Os limites de cor, esses sim, são do cardápio e
+# moram na tabela `config`, viajando junto no backup.)
+CFG_PATH = os.path.join(_app_dir(), "config.json")
+
+# quantos backups automáticos guardar antes de apagar os mais antigos
+MAX_BACKUPS = 10
 
 # os dois tipos de custo — mesma tabela, mesma conta, leitura diferente
 TIPO_INSUMO = "Insumo"
@@ -56,6 +81,152 @@ UNIDADES_DE_FABRICA = {
 
 
 CATEGORIAS = ["Prato", "Porção", "Bebida", "Sobremesa", "Outro"]
+
+
+# ── configuração da instalação (config.json) ──────────────────────
+def cfg_load() -> dict:
+    try:
+        with open(CFG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def cfg_save(dados: dict):
+    try:
+        atual = cfg_load()
+        atual.update(dados)
+        with open(CFG_PATH, "w", encoding="utf-8") as f:
+            json.dump(atual, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def cfg_remover(chave):
+    atual = cfg_load()
+    if atual.pop(chave, None) is None:
+        return
+    try:
+        with open(CFG_PATH, "w", encoding="utf-8") as f:
+            json.dump(atual, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+# ── senha de acesso ───────────────────────────────────────────────
+TAMANHO_MINIMO_SENHA = 4
+
+
+def _hash_senha(senha: str, salt: str) -> str:
+    return hashlib.sha256((salt + senha).encode("utf-8")).hexdigest()
+
+
+def senha_ativa() -> bool:
+    return bool(cfg_load().get("auth"))
+
+
+def definir_senha(senha, confirmacao) -> str:
+    """Grava a senha. Devolve a mensagem de erro, ou '' se deu certo.
+
+    Guarda só o resumo (SHA-256 com salt aleatório) — a senha em si não fica
+    escrita em lugar nenhum. Se ele esquecer, não há como recuperar: apagar o
+    config.json devolve o acesso, e é isso que a tela avisa.
+    """
+    if not senha:
+        return "Digite a nova senha."
+    if senha != confirmacao:
+        return "As senhas não coincidem."
+    if len(senha) < TAMANHO_MINIMO_SENHA:
+        return f"A senha deve ter ao menos {TAMANHO_MINIMO_SENHA} caracteres."
+    salt = os.urandom(16).hex()
+    cfg_save({"auth": {"salt": salt, "hash": _hash_senha(senha, salt)}})
+    return ""
+
+
+def remover_senha():
+    cfg_remover("auth")
+
+
+def conferir_senha(senha) -> bool:
+    auth = cfg_load().get("auth")
+    if not auth:
+        return True
+    return _hash_senha(senha or "", auth.get("salt", "")) == auth.get("hash", "")
+
+
+# ── backup ────────────────────────────────────────────────────────
+def pasta_backup_auto() -> str:
+    return cfg_load().get("backup_auto_dir") or os.path.join(
+        os.path.dirname(DB_PATH), "backups")
+
+
+def backup_automatico_ligado() -> bool:
+    return bool(cfg_load().get("backup_auto"))
+
+
+def ligar_backup_automatico(ligado):
+    cfg_save({"backup_auto": bool(ligado)})
+
+
+def definir_pasta_backup_auto(pasta):
+    cfg_save({"backup_auto_dir": pasta})
+
+
+def nome_sugerido_backup() -> str:
+    return f"backup_cardapio_{datetime.datetime.now():%Y%m%d_%H%M%S}.db"
+
+
+def fazer_backup(destino):
+    """Cópia do banco para onde o dono escolher. Devolve erro ou ''."""
+    try:
+        shutil.copy2(DB_PATH, destino)
+        cfg_save({"backup_dir": os.path.dirname(destino)})
+        return ""
+    except Exception as e:
+        return str(e)
+
+
+def listar_backups():
+    """Backups automáticos existentes, do mais novo para o mais antigo."""
+    pasta = pasta_backup_auto()
+    try:
+        return sorted((f for f in os.listdir(pasta)
+                       if f.startswith("backup_auto_") and f.endswith(".db")),
+                      reverse=True)
+    except OSError:
+        return []
+
+
+def fazer_backup_automatico() -> str:
+    """Copia o banco para a pasta de backups, guardando os mais recentes.
+
+    Roda ao fechar o programa: é silenciosa e nunca levanta exceção — um erro
+    de backup não pode impedir o programa de fechar. Devolve o caminho gravado
+    (ou '' se não fez nada), só para quem quiser mostrar.
+    """
+    try:
+        if not backup_automatico_ligado() or not os.path.isfile(DB_PATH):
+            return ""
+        pasta = pasta_backup_auto()
+        os.makedirs(pasta, exist_ok=True)
+        base = f"backup_auto_{datetime.datetime.now():%Y%m%d_%H%M%S}"
+        destino = os.path.join(pasta, base + ".db")
+        # dois backups no mesmo segundo não podem se sobrescrever
+        n = 2
+        while os.path.exists(destino):
+            destino = os.path.join(pasta, f"{base}_{n}.db")
+            n += 1
+        shutil.copy2(DB_PATH, destino)
+        # rotação pelo NOME, que carrega a data/hora: copy2 preserva a data do
+        # arquivo de origem, então ordenar por data de modificação não serve
+        for antigo in listar_backups()[MAX_BACKUPS:]:
+            try:
+                os.remove(os.path.join(pasta, antigo))
+            except OSError:
+                pass
+        return destino
+    except Exception:
+        return ""
 
 
 def conectar():

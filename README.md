@@ -50,6 +50,7 @@ você mandar aplicar o preço.
 - ✅ **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
 - ✅ **Análise** — ranking de margem, alerta dos itens com lucro baixo e a
   simulação de aumento de preço
+- ✅ **Configurações** — senha de acesso, backup automático e os limites das cores
 
 A Análise mostra dois números por item: o **CMV** (só insumos, para você
 comparar com os 30–35% do ramo) e o **CMV com mão de obra** (insumos + quem
@@ -67,3 +68,16 @@ ao padrão. Cada casa tem a sua realidade.
 |---|---|
 | `banco.py` | Dados e cálculos (SQLite puro, sem interface) |
 | `cardapio.py` | Interface PyQt5 |
+| `cardapio.db` | Seus dados — fica na pasta do programa |
+| `config.json` | Senha e preferências de backup |
+
+## Seus dados não se perdem
+
+Ligue **backup automático ao fechar** nas Configurações e escolha a pasta (um
+pen drive, uma pasta da nuvem). A cada vez que você fecha o programa ele guarda
+uma cópia, mantendo sempre as 10 mais recentes. Dá também para salvar uma cópia
+na hora, a qualquer momento.
+
+Se quiser, ponha uma **senha** para abrir o programa. Ela não fica escrita em
+lugar nenhum — só uma marca embaralhada dela —, então guarde bem: esquecendo,
+a única saída é apagar o `config.json` (os dados do cardápio ficam intactos).

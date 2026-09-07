@@ -96,6 +96,19 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
   zerada ao salvar — nenhuma tela pode ter uma régua diferente da outra.
   A tela valida antes de gravar: verde tem de ser menor que amarelo, e mostra
   em palavras o que os números significam enquanto ele digita.
+- **Senha e backup vieram prontos do Fluxo de Caixa** (SHA-256 com salt em
+  `config.json`, backup ao fechar com rotação de 10, `_app_dir()` para achar a
+  pasta certa quando virar `.exe`). Não reinventar o que o projeto irmão já
+  resolveu foi o combinado desde o começo.
+- **Duas configurações, em lugares diferentes, de propósito**:
+  - `config.json` — senha, backup e pastas. É configuração da *instalação*:
+    tem de continuar valendo mesmo se o `.db` for trocado por um backup.
+  - tabela `config` no banco — os limites de cor. São do *cardápio*: viajam
+    junto no backup, porque a régua do dono acompanha os dados dele.
+- **O backup ao fechar nunca pode dar erro**: `fazer_backup_automatico` engole
+  qualquer exceção. Se a pasta sumiu, se o pen drive foi removido, o programa
+  fecha assim mesmo — um backup que impede o programa de fechar é pior que
+  backup nenhum.
 - **Unidades são dados, não código**: as listas de "Comprado em", "Usado em",
   "Pago por" e "Produz em" moram na tabela `unidades` e o dono edita cada uma
   pelo ⚙ ao lado do combo. As listas em `banco.py` viraram só a semente da
@@ -109,6 +122,8 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
 - ✅ Aba **Mão de obra** — montador, cozinheiro e quantos mais precisar, pela
   mesma conta (R$ 100 por dia ÷ 50 pratos = R$ 2,00 por prato)
 - ✅ **Unidades editáveis** pelo dono, nas duas abas de cadastro
+- ✅ Aba **Configurações** — senha de acesso, backup (manual e automático ao
+  fechar) e os limites das cores
 - ✅ Aba **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
 - ✅ Aba **Análise** — ranking de margem, alerta de lucro baixo e a simulação
   "e se o insumo subir?"
@@ -125,9 +140,8 @@ frente é proteção do dado (backup, senha) e conveniência (impressão).
    itens que ficaram com margem ruim (*o recurso mais valioso do programa*)
 4. ✅ **Mão de obra**: cadastro próprio e lançamento na ficha; CMV, CMV com
    mão de obra e lucro lado a lado na Análise; unidades editáveis
-5. Backup automático e senha (mesma solução do projeto Fluxo de Caixa)
-   — **é o próximo**
-6. Impressão da ficha para a cozinha
+5. ✅ **Backup automático e senha** (mesma solução do projeto Fluxo de Caixa)
+6. Impressão da ficha para a cozinha — **é o próximo**
 7. (Futuro) Self-service por quilo
 
 ### Como a aba Análise ficou

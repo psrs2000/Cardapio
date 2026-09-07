@@ -4,6 +4,7 @@ Para restaurante/bar: descubra quanto custa cada prato, porção e bebida,
 e quanto de fato sobra de lucro em cada um.
 """
 
+import os
 import sys
 
 from PyQt5.QtWidgets import (
@@ -11,7 +12,8 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QGroupBox,
     QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QStatusBar, QDialog, QListWidget,
+    QAbstractItemView, QStatusBar, QDialog, QListWidget, QCheckBox,
+    QFileDialog, QDialogButtonBox,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QFont
@@ -1246,6 +1248,230 @@ class AbaAnalise(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════
+#  ACESSO AO PROGRAMA  (mesma solução do Fluxo de Caixa)
+# ═══════════════════════════════════════════════════════════
+class DialogoLogin(QDialog):
+    def __init__(self, erro=""):
+        super().__init__()
+        self.setWindowTitle("Acesso ao Cardápio")
+        self.setModal(True)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel("Digite a senha para continuar:"))
+        self._ed = QLineEdit()
+        self._ed.setEchoMode(QLineEdit.Password)
+        self._ed.returnPressed.connect(self.accept)
+        lay.addWidget(self._ed)
+        self._lbl_erro = QLabel(erro)
+        self._lbl_erro.setStyleSheet("color:#c62828;")
+        lay.addWidget(self._lbl_erro)
+        botoes = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        botoes.accepted.connect(self.accept)
+        botoes.rejected.connect(self.reject)
+        lay.addWidget(botoes)
+        self._ed.setFocus()
+
+    def senha(self) -> str:
+        return self._ed.text()
+
+
+def verificar_login() -> bool:
+    """True se pode entrar: sem senha configurada, ou senha correta."""
+    if not banco.senha_ativa():
+        return True
+    erro = ""
+    while True:
+        dlg = DialogoLogin(erro)
+        if dlg.exec_() != QDialog.Accepted:
+            return False
+        if banco.conferir_senha(dlg.senha()):
+            return True
+        erro = "Senha incorreta. Tente novamente."
+
+
+# ═══════════════════════════════════════════════════════════
+#  ABA CONFIGURAÇÕES
+# ═══════════════════════════════════════════════════════════
+class AbaConfiguracoes(QWidget):
+    """Senha de acesso, backup e os limites das cores."""
+
+    def __init__(self, ao_mudar_limites=None):
+        super().__init__()
+        self._ao_mudar_limites = ao_mudar_limites
+        self._build()
+        self.recarregar()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 10, 12, 8)
+
+        # ── senha ─────────────────────────────────────────
+        grp_senha = QGroupBox("Senha de acesso")
+        fs = QGridLayout(grp_senha)
+        self._ed_senha1 = QLineEdit(); self._ed_senha1.setEchoMode(QLineEdit.Password)
+        self._ed_senha2 = QLineEdit(); self._ed_senha2.setEchoMode(QLineEdit.Password)
+        for w in (self._ed_senha1, self._ed_senha2):
+            w.setFixedWidth(220)
+        fs.addWidget(QLabel("Nova senha:"), 0, 0, Qt.AlignRight)
+        fs.addWidget(self._ed_senha1, 0, 1)
+        fs.addWidget(QLabel("Repita a senha:"), 1, 0, Qt.AlignRight)
+        fs.addWidget(self._ed_senha2, 1, 1)
+        bs = QHBoxLayout()
+        bs.setSpacing(8)
+        bs.addWidget(_btn("Definir senha", "#4CAF50", self._definir_senha, 150))
+        bs.addWidget(_btn("Remover senha", "#f44336", self._remover_senha, 160))
+        bs.addStretch()
+        fs.addLayout(bs, 2, 1)
+        self._lbl_senha = QLabel()
+        fs.addWidget(self._lbl_senha, 3, 1)
+        aviso = QLabel(
+            "A senha é pedida ao abrir o programa. Ela não fica guardada em "
+            "lugar nenhum — só uma marca embaralhada dela. Por isso, se você "
+            "esquecer, ninguém consegue descobrir qual era: a saída é apagar o "
+            "arquivo <b>config.json</b>, na pasta do programa, que o acesso "
+            "volta a ser livre (os dados do cardápio não se perdem).")
+        aviso.setWordWrap(True)
+        aviso.setStyleSheet(
+            "color:#555;font-size:11px;background:#fff8e1;"
+            "border:1px solid #ffe082;border-radius:6px;padding:8px;")
+        fs.addWidget(aviso, 0, 2, 4, 1)
+        fs.setColumnStretch(2, 1)
+        root.addWidget(grp_senha)
+
+        # ── backup ────────────────────────────────────────
+        grp_bkp = QGroupBox("Backup dos dados")
+        fb = QVBoxLayout(grp_bkp)
+
+        linha_man = QHBoxLayout()
+        linha_man.addWidget(QLabel("Guardar uma cópia agora, onde você quiser "
+                                   "(pen drive, nuvem, outra pasta):"))
+        linha_man.addWidget(_btn("Fazer backup...", "#6A1B9A", self._backup_manual, 160))
+        linha_man.addStretch()
+        fb.addLayout(linha_man)
+
+        self._chk_auto = QCheckBox("Fazer backup automático ao fechar o programa")
+        self._chk_auto.toggled.connect(self._ligar_auto)
+        fb.addWidget(self._chk_auto)
+
+        linha_pasta = QHBoxLayout()
+        linha_pasta.addWidget(QLabel("Pasta dos backups automáticos:"))
+        self._ed_pasta = QLineEdit()
+        self._ed_pasta.setReadOnly(True)
+        linha_pasta.addWidget(self._ed_pasta, 1)
+        linha_pasta.addWidget(_btn("Escolher pasta...", "#1565C0",
+                                   self._escolher_pasta, 170))
+        fb.addLayout(linha_pasta)
+
+        self._lbl_bkp = QLabel()
+        self._lbl_bkp.setStyleSheet("color:#555;font-size:11px;")
+        fb.addWidget(self._lbl_bkp)
+        root.addWidget(grp_bkp)
+
+        # ── limites das cores ─────────────────────────────
+        grp_lim = QGroupBox("Limites das cores")
+        fl = QHBoxLayout(grp_lim)
+        self._lbl_lim = QLabel()
+        self._lbl_lim.setWordWrap(True)
+        fl.addWidget(self._lbl_lim, 1)
+        fl.addWidget(_btn("Ajustar limites", "#607D8B", self._editar_limites, 150))
+        root.addWidget(grp_lim)
+
+        root.addStretch()
+
+    # ── senha ─────────────────────────────────────────────
+    def _definir_senha(self):
+        erro = banco.definir_senha(self._ed_senha1.text(), self._ed_senha2.text())
+        if erro:
+            QMessageBox.warning(self, "Senha", erro)
+            return
+        self._ed_senha1.clear(); self._ed_senha2.clear()
+        self.recarregar()
+        QMessageBox.information(
+            self, "Senha",
+            "Senha definida. Ela será pedida na próxima vez que o programa abrir.")
+
+    def _remover_senha(self):
+        if not banco.senha_ativa():
+            QMessageBox.information(self, "Senha", "Não há senha configurada.")
+            return
+        if QMessageBox.question(
+                self, "Confirmar",
+                "Remover a senha?\n\nO programa passa a abrir sem pedir nada.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        banco.remover_senha()
+        self.recarregar()
+        QMessageBox.information(self, "Senha", "Senha removida.")
+
+    # ── backup ────────────────────────────────────────────
+    def _backup_manual(self):
+        pasta = banco.cfg_load().get("backup_dir") or os.path.dirname(banco.DB_PATH)
+        destino, _ = QFileDialog.getSaveFileName(
+            self, "Salvar backup", os.path.join(pasta, banco.nome_sugerido_backup()),
+            "Banco de dados (*.db)")
+        if not destino:
+            return
+        erro = banco.fazer_backup(destino)
+        if erro:
+            QMessageBox.critical(self, "Backup", f"Não foi possível salvar:\n{erro}")
+            return
+        QMessageBox.information(self, "Backup", f"Backup salvo em:\n{destino}")
+
+    def _ligar_auto(self, ligado):
+        banco.ligar_backup_automatico(ligado)
+        self.recarregar()
+
+    def _escolher_pasta(self):
+        pasta = QFileDialog.getExistingDirectory(
+            self, "Escolher a pasta dos backups automáticos",
+            banco.pasta_backup_auto())
+        if not pasta:
+            return
+        banco.definir_pasta_backup_auto(pasta)
+        self.recarregar()
+
+    # ── limites ───────────────────────────────────────────
+    def _editar_limites(self):
+        dlg = DialogoLimites(self)
+        dlg.exec_()
+        if dlg.mudou:
+            self.recarregar()
+            if self._ao_mudar_limites:
+                self._ao_mudar_limites()
+
+    def recarregar(self):
+        if banco.senha_ativa():
+            self._lbl_senha.setText("🔒 O programa está pedindo senha para abrir.")
+            self._lbl_senha.setStyleSheet("color:#1b5e20;font-weight:bold;")
+        else:
+            self._lbl_senha.setText("🔓 Sem senha — o programa abre direto.")
+            self._lbl_senha.setStyleSheet("color:#888;")
+
+        self._chk_auto.blockSignals(True)
+        self._chk_auto.setChecked(banco.backup_automatico_ligado())
+        self._chk_auto.blockSignals(False)
+        self._ed_pasta.setText(banco.pasta_backup_auto())
+        guardados = len(banco.listar_backups())
+        self._lbl_bkp.setText(
+            f"Guarda sempre os {banco.MAX_BACKUPS} backups mais recentes; os mais "
+            f"antigos são apagados sozinhos. Hoje há {guardados} guardado(s)."
+            + ("" if banco.backup_automatico_ligado()
+               else "  ⚠️ O backup automático está desligado."))
+
+        lim = banco.limites()
+        f = banco.FAIXAS
+        self._lbl_lim.setText(
+            f"Pelo <b>CMV com mão de obra</b>: {f['bom']['sinal']} até "
+            f"{banco.fmt_num_edicao(lim['cmv_total_bom'], 1)}%, "
+            f"{f['atencao']['sinal']} até "
+            f"{banco.fmt_num_edicao(lim['cmv_total_atencao'], 1)}%, "
+            f"{f['ruim']['sinal']} acima disso.<br>"
+            f"<span style='color:#666;font-size:11px'>CMV só de insumo (a régua "
+            f"do ramo, para comparação): verde até "
+            f"{banco.fmt_num_edicao(lim['cmv_bom'], 1)}%, amarelo até "
+            f"{banco.fmt_num_edicao(lim['cmv_atencao'], 1)}%.</span>")
+
+
+# ═══════════════════════════════════════════════════════════
 #  JANELA PRINCIPAL
 # ═══════════════════════════════════════════════════════════
 class MainWindow(QMainWindow):
@@ -1261,12 +1487,15 @@ class MainWindow(QMainWindow):
         self._aba_cardapio = AbaCardapio(ao_mudar=self._atualizar_tudo)
         self._aba_analise = AbaAnalise(ao_abrir_item=self._abrir_ficha,
                                        ao_mudar=self._atualizar_tudo)
+        self._aba_config = AbaConfiguracoes(
+            ao_mudar_limites=self._aba_analise.recarregar)
 
         self._tabs = QTabWidget()
         self._tabs.addTab(self._aba_insumos, "  Insumos  ")
         self._tabs.addTab(self._aba_mao_obra, "  Mão de obra  ")
         self._tabs.addTab(self._aba_cardapio, "  Cardápio  ")
         self._tabs.addTab(self._aba_analise, "  Análise  ")
+        self._tabs.addTab(self._aba_config, "  Configurações  ")
         self._tabs.currentChanged.connect(self._trocou_de_aba)
         self.setCentralWidget(self._tabs)
 
@@ -1283,8 +1512,18 @@ class MainWindow(QMainWindow):
 
     def _trocou_de_aba(self, indice):
         """A Análise sempre abre com os números do momento."""
-        if self._tabs.widget(indice) is self._aba_analise:
+        aba = self._tabs.widget(indice)
+        if aba is self._aba_analise:
             self._aba_analise.recarregar()
+        elif aba is self._aba_config:
+            self._aba_config.recarregar()
+
+    def closeEvent(self, event):
+        """Última coisa antes de fechar: guardar a cópia do dia."""
+        destino = banco.fazer_backup_automatico()
+        if destino:
+            self.statusBar().showMessage(f"Backup salvo em {destino}", 2000)
+        event.accept()
 
     def _abrir_ficha(self, item_id):
         """Duplo clique na Análise leva direto à ficha técnica do item."""
@@ -1296,6 +1535,8 @@ if __name__ == "__main__":
     banco.init_db()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    if not verificar_login():
+        sys.exit(0)
     win = MainWindow()
     win.show()
     sys.exit(app.exec_())
