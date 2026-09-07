@@ -110,6 +110,39 @@ def custo_unitario(preco_compra, qtd_util) -> float:
         return 0.0
 
 
+# ── faixas de CMV ─────────────────────────────────────────────────
+# CMV = quanto de cada real vendido vai embora só em insumo.
+# No ramo, até ~35% é saudável; acima de 45% o item quase não dá lucro.
+CMV_BOM = 35.0
+CMV_ATENCAO = 45.0
+
+FAIXAS = {
+    "bom":      {"sinal": "🟢", "rotulo": "Saudável",
+                 "cor": "#1b5e20", "fundo": "#e8f5e9"},
+    "atencao":  {"sinal": "🟡", "rotulo": "Atenção",
+                 "cor": "#ef6c00", "fundo": "#fff3e0"},
+    "ruim":     {"sinal": "🔴", "rotulo": "Lucro baixo",
+                 "cor": "#c62828", "fundo": "#ffebee"},
+    "sem_dado": {"sinal": "⚪", "rotulo": "Faltam dados",
+                 "cor": "#616161", "fundo": "#f5f5f5"},
+}
+
+
+def faixa_cmv(cmv, tem_dados=True) -> str:
+    """Classifica o CMV em 'bom', 'atencao', 'ruim' ou 'sem_dado'.
+
+    Sem preço de venda ou sem ficha técnica não dá para julgar o item —
+    mostrar 0% de CMV nesse caso enganaria o usuário.
+    """
+    if not tem_dados:
+        return "sem_dado"
+    if cmv <= CMV_BOM:
+        return "bom"
+    if cmv <= CMV_ATENCAO:
+        return "atencao"
+    return "ruim"
+
+
 # ── insumos ───────────────────────────────────────────────────────
 def listar_insumos():
     con = conectar()
@@ -247,19 +280,101 @@ def custo_do_item(item_id) -> float:
     return sum(c["custo"] for c in listar_ficha(item_id))
 
 
+def custos_por_item():
+    """{item_id: custo da ficha} — o cardápio inteiro em uma consulta só."""
+    con = conectar()
+    linhas = con.execute("""
+        SELECT f.item_id,
+               SUM(f.quantidade * ins.preco_compra /
+                   CASE WHEN ins.qtd_util > 0 THEN ins.qtd_util END)
+          FROM ficha f JOIN insumos ins ON ins.id = f.insumo_id
+         GROUP BY f.item_id""").fetchall()
+    con.close()
+    return {iid: float(custo or 0.0) for iid, custo in linhas}
+
+
 def analise_itens():
-    """Custo, preço, margem e CMV de cada item do cardápio."""
+    """Custo, preço, margem, CMV e situação de cada item do cardápio.
+
+    'situacao' diz o que ainda falta preencher; enquanto faltar, o item entra
+    como 'sem_dado' e fica fora do ranking de margem.
+    """
+    custos = custos_por_item()
     resultado = []
     for iid, nome, categoria, preco, _obs in listar_itens():
-        custo = custo_do_item(iid)
+        custo = custos.get(iid, 0.0)
         preco = float(preco or 0)
         margem = preco - custo
         cmv = (custo / preco * 100) if preco else 0.0
+        if preco <= 0:
+            situacao = "falta o preço de venda"
+        elif custo <= 0:
+            situacao = "falta montar a ficha"
+        else:
+            situacao = ""
+        completo = not situacao
         resultado.append({"id": iid, "nome": nome, "categoria": categoria,
                           "custo": custo, "preco": preco, "margem": margem,
                           "margem_pct": (margem / preco * 100) if preco else 0.0,
-                          "cmv": cmv})
+                          "cmv": cmv, "completo": completo,
+                          "situacao": situacao,
+                          "faixa": faixa_cmv(cmv, completo)})
     return resultado
+
+
+def simular_preco_insumo(insumo_id, novo_preco):
+    """Como fica o cardápio se este insumo passar a custar outro preço.
+
+    Responde a pergunta mais valiosa do programa — "a carne subiu, quais
+    pratos ficaram com lucro ruim?" — sem gravar nada no banco.
+    Devolve uma linha por item que usa o insumo, com o antes e o depois,
+    do pior resultado para o melhor.
+    """
+    ins = obter_insumo(insumo_id)
+    if not ins:
+        return []
+    _id, _nome, _un_compra, preco_atual, unidade_uso, qtd_util, _forn, _atu = ins
+    cu_antes = custo_unitario(preco_atual, qtd_util)
+    cu_depois = custo_unitario(novo_preco, qtd_util)
+    delta = cu_depois - cu_antes
+
+    con = conectar()
+    linhas = con.execute(
+        "SELECT f.item_id, i.nome, i.categoria, i.preco_venda, f.quantidade"
+        "  FROM ficha f JOIN itens i ON i.id = f.item_id"
+        " WHERE f.insumo_id = ?", (insumo_id,)).fetchall()
+    con.close()
+
+    custos = custos_por_item()
+    saida = []
+    for item_id, nome, categoria, preco_venda, qtd in linhas:
+        preco_venda = float(preco_venda or 0)
+        custo_antes = custos.get(item_id, 0.0)
+        custo_depois = custo_antes + delta * float(qtd or 0)
+        completo_antes = preco_venda > 0 and custo_antes > 0
+        completo_depois = preco_venda > 0 and custo_depois > 0
+        cmv_antes = (custo_antes / preco_venda * 100) if preco_venda else 0.0
+        cmv_depois = (custo_depois / preco_venda * 100) if preco_venda else 0.0
+        faixa_antes = faixa_cmv(cmv_antes, completo_antes)
+        faixa_depois = faixa_cmv(cmv_depois, completo_depois)
+        saida.append({"id": item_id, "nome": nome, "categoria": categoria,
+                      "preco": preco_venda, "quantidade": float(qtd or 0),
+                      "unidade": unidade_uso,
+                      "custo_antes": custo_antes, "custo_depois": custo_depois,
+                      "margem_antes": preco_venda - custo_antes,
+                      "margem_depois": preco_venda - custo_depois,
+                      "cmv_antes": cmv_antes, "cmv_depois": cmv_depois,
+                      "faixa_antes": faixa_antes, "faixa_depois": faixa_depois,
+                      "piorou": faixa_depois == "ruim" and faixa_antes != "ruim"})
+    saida.sort(key=lambda l: (0 if l["cmv_depois"] else 1, -l["cmv_depois"],
+                              l["nome"].lower()))
+    return saida
+
+
+def custo_unitario_do_insumo(insumo_id) -> float:
+    """Custo real de 1 unidade de uso do insumo, como está gravado hoje."""
+    ins = obter_insumo(insumo_id)
+    return custo_unitario(ins[3], ins[5]) if ins else 0.0
 
 
 def itens_que_usam(insumo_id):

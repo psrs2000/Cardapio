@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QGroupBox,
     QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QStatusBar,
+    QAbstractItemView, QStatusBar, QDialog,
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QBrush, QFont
@@ -411,6 +411,10 @@ class AbaCardapio(QWidget):
         self._lbl_titulo.setText(f"Ficha técnica — {self._ed_item.text()}")
         self.recarregar_ficha()
 
+    def abrir_item(self, iid):
+        """Seleciona um item vindo de outra aba (duplo clique na Análise)."""
+        self._selecionar_por_id(iid)
+
     def _selecionar_por_id(self, iid):
         for i in range(self._tab_itens.rowCount()):
             if self._tab_itens.item(i, 0).text() == str(iid):
@@ -492,17 +496,19 @@ class AbaCardapio(QWidget):
             return
         margem = preco - custo
         cmv = custo / preco * 100
-        cor = "#1b5e20" if cmv <= 35 else ("#ef6c00" if cmv <= 45 else "#c62828")
-        fundo = "#e8f5e9" if cmv <= 35 else ("#fff3e0" if cmv <= 45 else "#ffebee")
-        sinal = "🟢" if cmv <= 35 else ("🟡" if cmv <= 45 else "🔴")
+        f = banco.FAIXAS[banco.faixa_cmv(cmv, custo > 0)]
+        if custo <= 0:
+            corpo = ("<span style='font-size:12px'>monte a ficha técnica para ver "
+                     "o custo e a margem</span>")
+        else:
+            corpo = (f"Custo <b>{banco.fmt_moeda(custo)}</b> &nbsp;•&nbsp; "
+                     f"Margem <b>{banco.fmt_moeda(margem)}</b><br>"
+                     f"<span style='font-size:20px'>CMV {cmv:.1f}% {f['sinal']}</span>")
         self._painel.setText(
-            f"Custo <b>{banco.fmt_moeda(custo)}</b> &nbsp;•&nbsp; "
-            f"Venda <b>{banco.fmt_moeda(preco)}</b> &nbsp;•&nbsp; "
-            f"Margem <b>{banco.fmt_moeda(margem)}</b><br>"
-            f"<span style='font-size:20px'>CMV {cmv:.1f}% {sinal}</span>")
+            f"Venda <b>{banco.fmt_moeda(preco)}</b> &nbsp;•&nbsp; {corpo}")
         self._painel.setStyleSheet(
-            f"font-size:14px;padding:10px;border:2px solid {cor};"
-            f"border-radius:8px;background:{fundo};color:{cor};")
+            f"font-size:14px;padding:10px;border:2px solid {f['cor']};"
+            f"border-radius:8px;background:{f['fundo']};color:{f['cor']};")
 
     # ── recarga geral ─────────────────────────────────────
     def recarregar(self):
@@ -544,23 +550,356 @@ class AbaCardapio(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════
+#  ABA ANÁLISE  (ranking de margem e simulação de aumento)
+# ═══════════════════════════════════════════════════════════
+COLS_ANALISE = ["id", "Item", "Categoria", "Custo", "Preço de venda",
+                "Lucro por unidade", "CMV", "Situação"]
+
+ORDENS = ["Pior margem primeiro", "Melhor margem primeiro",
+          "Maior lucro em R$", "Nome do item"]
+
+
+def _cartao(texto, faixa):
+    """Quadrinho colorido do resumo (🟢 saudáveis, 🟡 atenção, 🔴 lucro baixo)."""
+    f = banco.FAIXAS[faixa]
+    lbl = QLabel(texto)
+    lbl.setAlignment(Qt.AlignCenter)
+    lbl.setFixedHeight(52)
+    lbl.setMinimumWidth(150)
+    lbl.setStyleSheet(
+        f"font-size:13px;font-weight:bold;color:{f['cor']};background:{f['fundo']};"
+        f"border:1px solid {f['cor']};border-radius:8px;padding:4px;")
+    return lbl
+
+
+class DialogoSimulacao(QDialog):
+    """Mostra o antes e o depois de cada item quando um insumo muda de preço."""
+
+    def __init__(self, pai, insumo_id, nome_insumo, preco_atual, novo_preco, linhas):
+        super().__init__(pai)
+        self._insumo_id = insumo_id
+        self._novo_preco = novo_preco
+        self.aplicado = False
+        self.setWindowTitle("E se o preço mudar?")
+        self.resize(1080, 470)
+
+        root = QVBoxLayout(self)
+        cu_antes = banco.custo_unitario_do_insumo(insumo_id)
+        ins = banco.obter_insumo(insumo_id)
+        unidade = ins[4] if ins else ""
+        cu_depois = banco.custo_unitario(novo_preco, ins[5]) if ins else 0.0
+
+        topo = QLabel(
+            f"<b>{nome_insumo}</b> — compra de {banco.fmt_moeda(preco_atual)} "
+            f"para <b>{banco.fmt_moeda(novo_preco)}</b><br>"
+            f"custo por {unidade}: {banco.fmt_moeda(cu_antes, 4)} → "
+            f"<b>{banco.fmt_moeda(cu_depois, 4)}</b>")
+        topo.setStyleSheet(
+            "font-size:13px;padding:8px;background:#e3f2fd;"
+            "border:1px solid #90caf9;border-radius:6px;")
+        root.addWidget(topo)
+
+        cols = ["Item", "Preço de venda", "Custo antes", "Custo depois",
+                "Lucro antes", "Lucro depois", "CMV antes", "CMV depois"]
+        tab = QTableWidget(0, len(cols))
+        tab.setHorizontalHeaderLabels(cols)
+        tab.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tab.setSelectionBehavior(QAbstractItemView.SelectRows)
+        tab.setAlternatingRowColors(True)
+        tab.verticalHeader().setVisible(False)
+        for l in linhas:
+            i = tab.rowCount()
+            tab.insertRow(i)
+            f_antes = banco.FAIXAS[l["faixa_antes"]]
+            f_depois = banco.FAIXAS[l["faixa_depois"]]
+            vals = [l["nome"], banco.fmt_moeda(l["preco"]),
+                    banco.fmt_moeda(l["custo_antes"]),
+                    banco.fmt_moeda(l["custo_depois"]),
+                    banco.fmt_moeda(l["margem_antes"]),
+                    banco.fmt_moeda(l["margem_depois"]),
+                    f"{l['cmv_antes']:.1f}% {f_antes['sinal']}"
+                    if l["faixa_antes"] != "sem_dado" else f_antes["sinal"],
+                    f"{l['cmv_depois']:.1f}% {f_depois['sinal']}"
+                    if l["faixa_depois"] != "sem_dado" else f_depois["sinal"]]
+            for j, v in enumerate(vals):
+                it = QTableWidgetItem(v)
+                if j:
+                    it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if j in (3, 5, 7):
+                    it.setForeground(QBrush(QColor(f_depois["cor"])))
+                    it.setFont(QFont("Segoe UI", 9, QFont.Bold))
+                if l["piorou"]:
+                    it.setBackground(QBrush(QColor(banco.FAIXAS["ruim"]["fundo"])))
+                tab.setItem(i, j, it)
+        tab.resizeColumnsToContents()
+        root.addWidget(tab, 1)
+
+        pioraram = [l["nome"] for l in linhas if l["piorou"]]
+        if pioraram:
+            aviso = ("⚠️ <b>Passam a ter lucro baixo:</b> " + ", ".join(pioraram))
+            faixa = "ruim"
+        elif linhas:
+            aviso = "✅ Nenhum item passa para a faixa vermelha com esse preço."
+            faixa = "bom"
+        else:
+            aviso = "Esse insumo ainda não é usado em nenhuma ficha técnica."
+            faixa = "sem_dado"
+        f = banco.FAIXAS[faixa]
+        lbl = QLabel(aviso)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet(
+            f"font-size:13px;padding:8px;color:{f['cor']};background:{f['fundo']};"
+            f"border:1px solid {f['cor']};border-radius:6px;")
+        root.addWidget(lbl)
+
+        bl = QHBoxLayout()
+        bl.addStretch()
+        bl.addWidget(_btn("Aplicar novo preço", "#4CAF50", self._aplicar, 180))
+        bl.addWidget(_btn("Fechar", "#2196F3", self.reject, 110))
+        root.addLayout(bl)
+
+    def _aplicar(self):
+        if QMessageBox.question(
+                self, "Confirmar",
+                f"Gravar o novo preço de compra "
+                f"({banco.fmt_moeda(self._novo_preco)}) neste insumo?\n\n"
+                "O custo de todos os itens que o usam será recalculado.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        ins = banco.obter_insumo(self._insumo_id)
+        if not ins:
+            QMessageBox.warning(self, "Atenção", "Insumo não encontrado.")
+            return
+        _id, nome, un_compra, _preco, un_uso, qtd_util, forn, _atu = ins
+        try:
+            banco.salvar_insumo(self._insumo_id, nome, un_compra, self._novo_preco,
+                                un_uso, qtd_util, forn or "")
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Não foi possível salvar:\n{e}")
+            return
+        self.aplicado = True
+        self.accept()
+
+
+class AbaAnalise(QWidget):
+    """Ranking de margem e o alerta dos itens que dão pouco lucro."""
+
+    def __init__(self, ao_abrir_item=None, ao_mudar=None):
+        super().__init__()
+        self._ao_abrir_item = ao_abrir_item   # leva o usuário à ficha do item
+        self._ao_mudar = ao_mudar             # avisa as outras abas
+        self._build()
+        self.recarregar()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 10, 12, 8)
+
+        # ── resumo em quadrinhos ──────────────────────────
+        resumo = QHBoxLayout()
+        self._cartoes = {}
+        for faixa, titulo in [("bom", "saudáveis"), ("atencao", "atenção"),
+                              ("ruim", "lucro baixo"), ("sem_dado", "faltam dados")]:
+            c = _cartao("—", faixa)
+            self._cartoes[faixa] = (c, titulo)
+            resumo.addWidget(c)
+        resumo.addStretch()
+        root.addLayout(resumo)
+
+        self._alerta = QLabel("")
+        self._alerta.setWordWrap(True)
+        root.addWidget(self._alerta)
+
+        # ── filtros ───────────────────────────────────────
+        filtros = QHBoxLayout()
+        self._cb_cat = QComboBox(); self._cb_cat.setFixedWidth(180)
+        self._cb_ordem = QComboBox(); self._cb_ordem.addItems(ORDENS)
+        self._cb_ordem.setFixedWidth(200)
+        self._cb_cat.currentIndexChanged.connect(self._preencher_tabela)
+        self._cb_ordem.currentIndexChanged.connect(self._preencher_tabela)
+        filtros.addWidget(QLabel("Categoria:")); filtros.addWidget(self._cb_cat)
+        filtros.addSpacing(16)
+        filtros.addWidget(QLabel("Ordenar por:")); filtros.addWidget(self._cb_ordem)
+        filtros.addStretch()
+        filtros.addWidget(_btn("Atualizar", "#2196F3", self.recarregar, 110))
+        root.addLayout(filtros)
+
+        # ── ranking ───────────────────────────────────────
+        self._tab = QTableWidget(0, len(COLS_ANALISE))
+        self._tab.setHorizontalHeaderLabels(COLS_ANALISE)
+        self._tab.setColumnHidden(0, True)
+        self._tab.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._tab.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._tab.setAlternatingRowColors(True)
+        self._tab.verticalHeader().setVisible(False)
+        self._tab.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self._tab.doubleClicked.connect(self._abrir_item)
+        root.addWidget(self._tab, 1)
+
+        dica = QLabel("Dê dois cliques em um item para abrir a ficha técnica dele.")
+        dica.setStyleSheet("color:#777;font-size:11px;")
+        root.addWidget(dica)
+
+        # ── simulação de aumento ──────────────────────────
+        grp = QGroupBox("A carne subiu? Veja o efeito antes de mudar o preço")
+        gl = QHBoxLayout(grp)
+        self._cb_insumo = QComboBox(); self._cb_insumo.setMinimumWidth(260)
+        self._ed_novo = QLineEdit(); self._ed_novo.setFixedWidth(110)
+        self._ed_novo.setPlaceholderText("38,00")
+        self._ed_novo.returnPressed.connect(self._simular)
+        self._lbl_atual = QLabel("—")
+        self._lbl_atual.setStyleSheet("color:#555;font-size:12px;")
+        self._cb_insumo.currentIndexChanged.connect(self._mostrar_preco_atual)
+        gl.addWidget(QLabel("Insumo:")); gl.addWidget(self._cb_insumo)
+        gl.addWidget(QLabel("Novo preço de compra:")); gl.addWidget(self._ed_novo)
+        gl.addWidget(self._lbl_atual)
+        gl.addWidget(_btn("Ver efeito", "#00897B", self._simular, 130))
+        gl.addStretch()
+        root.addWidget(grp)
+
+        self._status = QLabel("")
+        self._status.setStyleSheet("color:#555;font-size:11px;")
+        root.addWidget(self._status)
+
+    # ── ranking ───────────────────────────────────────────
+    def _preencher_tabela(self):
+        cat = self._cb_cat.currentText()
+        linhas = [l for l in self._dados
+                  if cat in ("Todas as categorias", "") or (l["categoria"] or "") == cat]
+
+        ordem = self._cb_ordem.currentText()
+        if ordem == ORDENS[0]:      # pior margem primeiro
+            chave = lambda l: (l["completo"] is False, -l["cmv"], l["nome"].lower())
+        elif ordem == ORDENS[1]:    # melhor margem primeiro
+            chave = lambda l: (l["completo"] is False, l["cmv"], l["nome"].lower())
+        elif ordem == ORDENS[2]:    # maior lucro em R$
+            chave = lambda l: (l["completo"] is False, -l["margem"], l["nome"].lower())
+        else:                       # nome
+            chave = lambda l: l["nome"].lower()
+        linhas.sort(key=chave)
+
+        self._tab.setRowCount(0)
+        for l in linhas:
+            f = banco.FAIXAS[l["faixa"]]
+            i = self._tab.rowCount()
+            self._tab.insertRow(i)
+            cmv = "—" if not l["completo"] else f"{l['cmv']:.1f}%"
+            situacao = l["situacao"] or f"{f['sinal']} {f['rotulo']}"
+            vals = [str(l["id"]), l["nome"], l["categoria"] or "",
+                    banco.fmt_moeda(l["custo"]) if l["custo"] > 0 else "—",
+                    banco.fmt_moeda(l["preco"]) if l["preco"] > 0 else "—",
+                    banco.fmt_moeda(l["margem"]) if l["completo"] else "—",
+                    cmv, situacao]
+            for j, v in enumerate(vals):
+                it = QTableWidgetItem(v)
+                if j in (3, 4, 5, 6):
+                    it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if j in (5, 6, 7):
+                    it.setForeground(QBrush(QColor(f["cor"])))
+                if j in (6, 7):
+                    it.setFont(QFont("Segoe UI", 9, QFont.Bold))
+                if l["faixa"] == "ruim":
+                    it.setBackground(QBrush(QColor(f["fundo"])))
+                self._tab.setItem(i, j, it)
+        self._tab.resizeColumnsToContents()
+        self._status.setText(
+            f"{len(linhas)} itens listados de {len(self._dados)} no cardápio")
+
+    def _abrir_item(self):
+        sel = self._tab.selectionModel().selectedRows()
+        if sel and self._ao_abrir_item:
+            self._ao_abrir_item(int(self._tab.item(sel[0].row(), 0).text()))
+
+    # ── simulação ─────────────────────────────────────────
+    def _mostrar_preco_atual(self):
+        iid = self._cb_insumo.currentData()
+        ins = banco.obter_insumo(iid) if iid else None
+        self._lbl_atual.setText(
+            f"(hoje: {banco.fmt_moeda(ins[3])} por {ins[2]})" if ins else "—")
+
+    def _simular(self):
+        iid = self._cb_insumo.currentData()
+        if not iid:
+            QMessageBox.information(self, "Info", "Cadastre insumos na aba Insumos.")
+            return
+        try:
+            novo = banco.parse_num(self._ed_novo.text())
+        except ValueError:
+            QMessageBox.warning(self, "Atenção", "O novo preço deve ser um número.")
+            return
+        if novo <= 0:
+            QMessageBox.warning(self, "Atenção",
+                                "Informe o novo preço de compra (maior que zero).")
+            return
+        ins = banco.obter_insumo(iid)
+        linhas = banco.simular_preco_insumo(iid, novo)
+        dlg = DialogoSimulacao(self, iid, ins[1], ins[3], novo, linhas)
+        dlg.exec_()
+        if dlg.aplicado:
+            self._ed_novo.clear()
+            self.recarregar()
+            if self._ao_mudar:
+                self._ao_mudar()
+
+    # ── recarga geral ─────────────────────────────────────
+    def recarregar(self):
+        self._dados = banco.analise_itens()
+
+        contagem = {"bom": 0, "atencao": 0, "ruim": 0, "sem_dado": 0}
+        for l in self._dados:
+            contagem[l["faixa"]] += 1
+        for faixa, (cartao, titulo) in self._cartoes.items():
+            sinal = banco.FAIXAS[faixa]["sinal"]
+            cartao.setText(f"{sinal} {contagem[faixa]}\n{titulo}")
+
+        ruins = [l["nome"] for l in self._dados if l["faixa"] == "ruim"]
+        if ruins:
+            f = banco.FAIXAS["ruim"]
+            texto = ("⚠️ <b>Estes itens dão pouco lucro</b> (CMV acima de "
+                     f"{banco.CMV_ATENCAO:.0f}%): " + ", ".join(ruins))
+        elif any(l["completo"] for l in self._dados):
+            f = banco.FAIXAS["bom"]
+            texto = "✅ Nenhum item com lucro baixo. O cardápio está saudável."
+        else:
+            f = banco.FAIXAS["sem_dado"]
+            texto = ("Cadastre os itens na aba Cardápio, com preço de venda e ficha "
+                     "técnica, para ver a margem de cada um aqui.")
+        self._alerta.setText(texto)
+        self._alerta.setStyleSheet(
+            f"font-size:13px;padding:8px;color:{f['cor']};background:{f['fundo']};"
+            f"border:1px solid {f['cor']};border-radius:6px;")
+
+        # filtro de categorias: só as que existem no cardápio
+        cat_atual = self._cb_cat.currentText()
+        cats = sorted({(l["categoria"] or "").strip() for l in self._dados} - {""})
+        self._cb_cat.blockSignals(True)
+        self._cb_cat.clear()
+        self._cb_cat.addItem("Todas as categorias")
+        self._cb_cat.addItems(cats)
+        if cat_atual:
+            i = self._cb_cat.findText(cat_atual)
+            self._cb_cat.setCurrentIndex(i if i >= 0 else 0)
+        self._cb_cat.blockSignals(False)
+
+        # combo de insumos da simulação
+        atual = self._cb_insumo.currentData()
+        self._cb_insumo.blockSignals(True)
+        self._cb_insumo.clear()
+        for (iid, nome, un_c, preco, _un_u, _qtd, _f, _a) in banco.listar_insumos():
+            self._cb_insumo.addItem(f"{nome}  ({banco.fmt_moeda(preco)}/{un_c})", iid)
+        if atual:
+            i = self._cb_insumo.findData(atual)
+            if i >= 0:
+                self._cb_insumo.setCurrentIndex(i)
+        self._cb_insumo.blockSignals(False)
+        self._mostrar_preco_atual()
+
+        self._preencher_tabela()
+
+
+# ═══════════════════════════════════════════════════════════
 #  JANELA PRINCIPAL
 # ═══════════════════════════════════════════════════════════
-class EmBreve(QWidget):
-    def __init__(self, titulo, texto):
-        super().__init__()
-        lay = QVBoxLayout(self)
-        lay.addStretch()
-        t = QLabel(titulo)
-        t.setAlignment(Qt.AlignCenter)
-        t.setStyleSheet("font-size:20px;font-weight:bold;color:#1565C0;")
-        d = QLabel(texto)
-        d.setAlignment(Qt.AlignCenter)
-        d.setStyleSheet("color:#666;font-size:12px;")
-        lay.addWidget(t); lay.addWidget(d)
-        lay.addStretch()
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -569,23 +908,35 @@ class MainWindow(QMainWindow):
 
         self._aba_insumos = AbaInsumos(ao_mudar=self._atualizar_tudo)
         self._aba_cardapio = AbaCardapio(ao_mudar=self._atualizar_tudo)
-        self._aba_analise = EmBreve(
-            "Análise", "Ranking de margem, CMV e alerta dos itens\n"
-                       "que ficaram com lucro baixo.")
+        self._aba_analise = AbaAnalise(ao_abrir_item=self._abrir_ficha,
+                                       ao_mudar=self._atualizar_tudo)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._aba_insumos, "  Insumos  ")
-        tabs.addTab(self._aba_cardapio, "  Cardápio  ")
-        tabs.addTab(self._aba_analise, "  Análise  ")
-        self.setCentralWidget(tabs)
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._aba_insumos, "  Insumos  ")
+        self._tabs.addTab(self._aba_cardapio, "  Cardápio  ")
+        self._tabs.addTab(self._aba_analise, "  Análise  ")
+        self._tabs.currentChanged.connect(self._trocou_de_aba)
+        self.setCentralWidget(self._tabs)
 
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("Pronto")
 
     def _atualizar_tudo(self):
         """Mudou um insumo ou uma ficha: recalcula o que depende disso."""
+        self._aba_insumos.recarregar()
         self._aba_cardapio.recarregar()
+        self._aba_analise.recarregar()
         self.statusBar().showMessage("Custos recalculados", 3000)
+
+    def _trocou_de_aba(self, indice):
+        """A Análise sempre abre com os números do momento."""
+        if self._tabs.widget(indice) is self._aba_analise:
+            self._aba_analise.recarregar()
+
+    def _abrir_ficha(self, item_id):
+        """Duplo clique na Análise leva direto à ficha técnica do item."""
+        self._tabs.setCurrentWidget(self._aba_cardapio)
+        self._aba_cardapio.abrir_item(item_id)
 
 
 if __name__ == "__main__":

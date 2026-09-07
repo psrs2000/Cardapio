@@ -32,11 +32,22 @@ pip install -r requirements.txt
 python cardapio.py
 ```
 
+## O recurso mais útil: "e se a carne subir?"
+
+Na aba **Análise**, escolha o insumo, digite o novo preço de compra e clique em
+*Ver efeito*. O programa mostra, item por item, o custo e o lucro **antes e
+depois**, e avisa quais pratos passam para a faixa vermelha. Nada é gravado até
+você mandar aplicar o preço.
+
 ## Situação atual
 
 - ✅ **Insumos** — cadastro com cálculo do custo real ao vivo
-- 🚧 **Cardápio** — montagem da ficha técnica de cada item
-- 🚧 **Análise** — margem, CMV % e alerta dos itens com lucro baixo
+- ✅ **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
+- ✅ **Análise** — ranking de margem, alerta dos itens com lucro baixo e a
+  simulação de aumento de preço
+
+Cada item recebe uma cor pelo CMV — 🟢 até 35%, 🟡 até 45%, 🔴 acima disso.
+Item sem preço de venda ou sem ficha técnica fica em ⚪, dizendo o que falta.
 
 ## Arquivos
 

@@ -63,24 +63,48 @@ mantém o programa simples.
 - **Estoque não entra agora**: exige contagem diária, que em restaurante
   costuma ser abandonada na segunda semana. Se um dia entrar, o caminho é
   estimar a baixa a partir das fichas técnicas, sem contagem manual.
+- **Simulação não grava nada**: na Análise, o novo preço do insumo só entra no
+  banco se o dono clicar em *Aplicar novo preço* e confirmar. Ele precisa poder
+  brincar com "e se…" sem medo de estragar o cadastro.
+- **Item sem preço ou sem ficha não recebe nota**: mostrar CMV 0% 🟢 para um
+  prato sem ficha técnica seria mentira. Esses ficam em ⚪ *faltam dados*, com
+  a frase do que está faltando, e fora do ranking de margem.
+- **Faixas de CMV no `banco.py`** (`faixa_cmv` e `FAIXAS`): a cor 🟢🟡🔴 é
+  regra de negócio, não decoração — as duas abas leem do mesmo lugar.
 
 ## Situação atual
 
-- ✅ `banco.py` — esquema, CRUD, custo, margem e CMV. **Sem interface**
+- ✅ `banco.py` — esquema, CRUD, custo, margem, CMV e simulação. **Sem interface**
 - ✅ Aba **Insumos** — cadastro com o custo real calculado ao vivo
-- 🚧 Aba **Cardápio** — montar a ficha técnica de cada item
-- 🚧 Aba **Análise** — ranking de margem e alerta de itens com lucro baixo
+- ✅ Aba **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
+- ✅ Aba **Análise** — ranking de margem, alerta de lucro baixo e a simulação
+  "e se o insumo subir?"
+
+O programa já responde as três perguntas do começo deste documento. Daqui para
+frente é proteção do dado (backup, senha) e conveniência (impressão).
 
 ## Roadmap
 
-1. **Cardápio**: cadastro do item + montagem da ficha (insumo + quantidade),
+1. ✅ **Cardápio**: cadastro do item + montagem da ficha (insumo + quantidade),
    com o custo se formando na tela
-2. **Preço e margem**: preço de venda, CMV % e margem com cores 🟢🟡🔴
-3. **Análise**: ranking por margem; ao mudar o preço de um insumo, listar os
+2. ✅ **Preço e margem**: preço de venda, CMV % e margem com cores 🟢🟡🔴
+3. ✅ **Análise**: ranking por margem; ao mudar o preço de um insumo, listar os
    itens que ficaram com margem ruim (*o recurso mais valioso do programa*)
 4. Backup automático e senha (mesma solução do projeto Fluxo de Caixa)
 5. Impressão da ficha para a cozinha
 6. (Futuro) Self-service por quilo
+
+### Como a aba Análise ficou
+
+- **Quatro quadrinhos** no topo: quantos itens estão 🟢 saudáveis, 🟡 em
+  atenção, 🔴 com lucro baixo e ⚪ com dado faltando
+- **Uma frase de alerta** nomeando os itens que dão pouco lucro — é o que o
+  dono precisa ler sem procurar
+- **Ranking** filtrável por categoria, começando pelo pior CMV; dois cliques em
+  uma linha abrem a ficha técnica daquele item na aba Cardápio
+- **Simulador** "a carne subiu?": escolhe o insumo, digita o novo preço de
+  compra e vê o antes e o depois de cada item que o usa, com destaque para os
+  que caem na faixa vermelha. Só grava se ele mandar
 
 ## Convenções
 
