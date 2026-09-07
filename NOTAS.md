@@ -74,20 +74,27 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
   a frase do que está faltando, e fora do ranking de margem.
 - **Faixas de CMV no `banco.py`** (`faixa_cmv` e `FAIXAS`): a cor 🟢🟡🔴 é
   regra de negócio, não decoração — as duas abas leem do mesmo lugar.
-- **Mão de obra fora do CMV, dentro do lucro**: o CMV continua sendo só de
-  insumos, senão o número deixa de ser comparável com os 30–35% que se falam
-  no ramo. A mão de obra tem coluna própria e sai do lucro. Como o custo
-  somado (*custo primário*) também precisa de uma régua, ele tem a sua —
-  `CUSTO_TOTAL_BOM`/`CUSTO_TOTAL_ATENCAO`, em torno de 60% e 70% — e o item
-  fica com a **pior** das duas notas. Assim um prato com CMV ótimo cai para 🟡
-  ou 🔴 quando a mão de obra come o que sobrava, com a frase *"a mão de obra
-  pesa no custo"* dizendo por quê.
-  → **Decisão em aberto**: o dono ainda não escolheu entre isso e somar tudo
-  em um número só. Como os dois valores ficam gravados separados, trocar é
-  mexer em `avaliar()` e mais nada.
+- **Quem dá a cor é o CMV com mão de obra** (decisão do dono, e ele tem
+  razão). São dois números na tela:
+  - **CMV** — só insumos, na régua de 30–35% do ramo. Serve para comparar com
+    o mercado; é informação, não dá a cor.
+  - **CMV com mão de obra** — insumos + quem faz, sobre o preço. Régua própria
+    (`CUSTO_TOTAL_BOM`/`CUSTO_TOTAL_ATENCAO`, 60% e 70%), e é ele que decide
+    🟢🟡🔴.
+
+  A primeira versão pegava a **pior** das duas notas, e isso era injusto com o
+  bar: um long neck de CMV 45,6% e **zero** mão de obra ficava 🔴 sendo que
+  não dá trabalho nenhum. Julgando pelos dois juntos, cozinha e bar entram na
+  mesma régua. Quando o insumo está em dia e ainda assim o item não vai bem,
+  a tela diz *"a mão de obra pesa no custo"*.
 - **Duas abas, um cadastro só**: Insumos e Mão de obra usam a mesma classe
   (`AbaCadastro`), mudando só os rótulos e as unidades. Duas telas porque na
   cabeça dele são duas coisas; um código porque a conta é a mesma.
+- **Unidades são dados, não código**: as listas de "Comprado em", "Usado em",
+  "Pago por" e "Produz em" moram na tabela `unidades` e o dono edita cada uma
+  pelo ⚙ ao lado do combo. As listas em `banco.py` viraram só a semente da
+  primeira execução. Renomear arrasta junto quem já usava a unidade (ninguém
+  fica órfão) e excluir é barrado enquanto alguém usar.
 
 ## Situação atual
 
@@ -95,6 +102,7 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
 - ✅ Aba **Insumos** — cadastro com o custo real calculado ao vivo
 - ✅ Aba **Mão de obra** — montador, cozinheiro e quantos mais precisar, pela
   mesma conta (R$ 100 por dia ÷ 50 pratos = R$ 2,00 por prato)
+- ✅ **Unidades editáveis** pelo dono, nas duas abas de cadastro
 - ✅ Aba **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
 - ✅ Aba **Análise** — ranking de margem, alerta de lucro baixo e a simulação
   "e se o insumo subir?"
@@ -109,8 +117,8 @@ frente é proteção do dado (backup, senha) e conveniência (impressão).
 2. ✅ **Preço e margem**: preço de venda, CMV % e margem com cores 🟢🟡🔴
 3. ✅ **Análise**: ranking por margem; ao mudar o preço de um insumo, listar os
    itens que ficaram com margem ruim (*o recurso mais valioso do programa*)
-4. ✅ **Mão de obra**: cadastro próprio e lançamento na ficha; CMV, custo
-   primário e lucro separados na Análise
+4. ✅ **Mão de obra**: cadastro próprio e lançamento na ficha; CMV, CMV com
+   mão de obra e lucro lado a lado na Análise; unidades editáveis
 5. Backup automático e senha (mesma solução do projeto Fluxo de Caixa)
 6. Impressão da ficha para a cozinha
 7. (Futuro) Self-service por quilo
@@ -122,7 +130,9 @@ frente é proteção do dado (backup, senha) e conveniência (impressão).
 - **Uma frase de alerta** nomeando os itens que dão pouco lucro — é o que o
   dono precisa ler sem procurar
 - **Ranking** filtrável por categoria, começando pelo pior CMV; dois cliques em
-  uma linha abrem a ficha técnica daquele item na aba Cardápio
+  uma linha abrem a ficha técnica daquele item na aba Cardápio. As colunas
+  separam **Insumos**, **Mão de obra**, **CMV** e **CMV c/ mão de obra** — esta
+  última é a que dá a cor
 - **Simulador** "a carne subiu?": escolhe o insumo, digita o novo preço de
   compra e vê o antes e o depois de cada item que o usa, com destaque para os
   que caem na faixa vermelha. Só grava se ele mandar

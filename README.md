@@ -45,17 +45,17 @@ você mandar aplicar o preço.
 ## Situação atual
 
 - ✅ **Insumos** — cadastro com cálculo do custo real ao vivo
-- ✅ **Mão de obra** — montador, cozinheiro e quantos mais precisar
+- ✅ **Mão de obra** — montador, cozinheiro e quantos mais precisar, com as
+  unidades de medida editáveis por você (⚙ ao lado de cada lista)
 - ✅ **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
 - ✅ **Análise** — ranking de margem, alerta dos itens com lucro baixo e a
   simulação de aumento de preço
 
-Cada item recebe uma cor pelo CMV — 🟢 até 35%, 🟡 até 45%, 🔴 acima disso. O
-CMV é só dos insumos, para se comparar com a régua do ramo; a mão de obra tem
-coluna própria e sai do lucro, sob uma régua mais folgada (o custo somado, até
-~60%). Vale a pior das duas notas, então um prato com CMV bom fica 🟡 ou 🔴 se
-a mão de obra comer o lucro. Item sem preço de venda ou sem ficha técnica fica
-em ⚪, dizendo o que falta.
+A Análise mostra dois números por item: o **CMV** (só insumos, para você
+comparar com os 30–35% do ramo) e o **CMV com mão de obra** (insumos + quem
+faz, sobre o preço). É o segundo que dá a cor — 🟢 até 60%, 🟡 até 70%, 🔴
+acima — porque é ele que diz o que sobra de verdade. Item sem preço de venda
+ou sem ficha técnica fica em ⚪, dizendo o que falta.
 
 ## Arquivos
 

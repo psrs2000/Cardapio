@@ -31,7 +31,13 @@ TIPO_INSUMO = "Insumo"
 TIPO_MAO_OBRA = "Mão de obra"
 TIPOS = [TIPO_INSUMO, TIPO_MAO_OBRA]
 
-# unidades sugeridas nos combos da tela
+# os dois campos de unidade de um cadastro
+CAMPO_COMPRA = "compra"
+CAMPO_USO = "uso"
+COLUNA_DO_CAMPO = {CAMPO_COMPRA: "unidade_compra", CAMPO_USO: "unidade_uso"}
+
+# listas de fábrica — servem só para semear a tabela na primeira execução;
+# daí em diante quem manda é o que o dono cadastrou em `unidades`
 UNIDADES_COMPRA = ["kg", "g", "L", "ml", "un", "garrafa", "barril", "caixa",
                    "pacote", "maço", "dúzia"]
 UNIDADES_USO = ["g", "ml", "un", "dose", "copo", "fatia", "porção"]
@@ -40,12 +46,12 @@ UNIDADES_USO = ["g", "ml", "un", "dose", "copo", "fatia", "porção"]
 UNIDADES_COMPRA_MO = ["dia", "hora", "turno", "semana", "mês", "serviço"]
 UNIDADES_USO_MO = ["prato", "porção", "un", "item", "kg", "hora"]
 
-
-def unidades_de(tipo):
-    """(unidades de compra, unidades de uso) conforme o tipo de custo."""
-    if tipo == TIPO_MAO_OBRA:
-        return UNIDADES_COMPRA_MO, UNIDADES_USO_MO
-    return UNIDADES_COMPRA, UNIDADES_USO
+UNIDADES_DE_FABRICA = {
+    (TIPO_INSUMO, CAMPO_COMPRA): UNIDADES_COMPRA,
+    (TIPO_INSUMO, CAMPO_USO): UNIDADES_USO,
+    (TIPO_MAO_OBRA, CAMPO_COMPRA): UNIDADES_COMPRA_MO,
+    (TIPO_MAO_OBRA, CAMPO_USO): UNIDADES_USO_MO,
+}
 
 
 CATEGORIAS = ["Prato", "Porção", "Bebida", "Sobremesa", "Outro"]
@@ -87,6 +93,24 @@ def init_db():
             quantidade REAL    NOT NULL DEFAULT 0,
             UNIQUE(item_id, insumo_id)
         )""")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS unidades (
+            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            tipo  TEXT    NOT NULL,
+            campo TEXT    NOT NULL,
+            nome  TEXT    NOT NULL,
+            ordem INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(tipo, campo, nome)
+        )""")
+    # primeira execução: as listas de fábrica viram dados que o dono edita
+    for (tipo, campo), nomes in UNIDADES_DE_FABRICA.items():
+        ja_tem = con.execute("SELECT COUNT(*) FROM unidades WHERE tipo=? AND campo=?",
+                             (tipo, campo)).fetchone()[0]
+        if not ja_tem:
+            con.executemany(
+                "INSERT INTO unidades (tipo, campo, nome, ordem) VALUES (?,?,?,?)",
+                [(tipo, campo, nome, i) for i, nome in enumerate(nomes)])
+
     # banco criado antes da mão de obra: ganha a coluna sem perder nada
     colunas = [c[1] for c in con.execute("PRAGMA table_info(insumos)")]
     if "tipo" not in colunas:
@@ -139,16 +163,97 @@ def custo_unitario(preco_compra, qtd_util) -> float:
         return 0.0
 
 
+# ── unidades (o dono cadastra as dele) ────────────────────────────
+def listar_unidades(tipo, campo):
+    con = conectar()
+    linhas = con.execute(
+        "SELECT nome FROM unidades WHERE tipo=? AND campo=? ORDER BY ordem, nome",
+        (tipo, campo)).fetchall()
+    con.close()
+    return [l[0] for l in linhas]
+
+
+def unidades_de(tipo):
+    """(unidades de compra, unidades de uso) conforme o tipo de custo."""
+    return listar_unidades(tipo, CAMPO_COMPRA), listar_unidades(tipo, CAMPO_USO)
+
+
+def adicionar_unidade(tipo, campo, nome):
+    """Cria uma unidade. Devolve False se o nome já existe."""
+    nome = (nome or "").strip()
+    if not nome:
+        return False
+    con = conectar()
+    try:
+        ordem = con.execute(
+            "SELECT COALESCE(MAX(ordem), 0) + 1 FROM unidades WHERE tipo=? AND campo=?",
+            (tipo, campo)).fetchone()[0]
+        con.execute("INSERT INTO unidades (tipo, campo, nome, ordem) VALUES (?,?,?,?)",
+                    (tipo, campo, nome, ordem))
+        con.commit()
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        con.close()
+    return True
+
+
+def renomear_unidade(tipo, campo, antigo, novo):
+    """Renomeia a unidade e corrige quem já a usava — ninguém fica órfão."""
+    novo = (novo or "").strip()
+    if not novo or novo == antigo:
+        return False
+    coluna = COLUNA_DO_CAMPO[campo]
+    con = conectar()
+    try:
+        con.execute("UPDATE unidades SET nome=? WHERE tipo=? AND campo=? AND nome=?",
+                    (novo, tipo, campo, antigo))
+        con.execute(f"UPDATE insumos SET {coluna}=? WHERE tipo=? AND {coluna}=?",
+                    (novo, tipo, antigo))
+        con.commit()
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        con.close()
+    return True
+
+
+def unidade_em_uso(tipo, campo, nome):
+    """Cadastros que usam esta unidade — vazio quer dizer que dá para excluir."""
+    coluna = COLUNA_DO_CAMPO[campo]
+    con = conectar()
+    linhas = con.execute(
+        f"SELECT nome FROM insumos WHERE tipo=? AND {coluna}=? ORDER BY nome",
+        (tipo, nome)).fetchall()
+    con.close()
+    return [l[0] for l in linhas]
+
+
+def excluir_unidade(tipo, campo, nome):
+    """Exclui a unidade se ninguém a estiver usando (devolve quem usa)."""
+    usos = unidade_em_uso(tipo, campo, nome)
+    if usos:
+        return usos
+    con = conectar()
+    con.execute("DELETE FROM unidades WHERE tipo=? AND campo=? AND nome=?",
+                (tipo, campo, nome))
+    con.commit()
+    con.close()
+    return []
+
+
 # ── faixas de CMV ─────────────────────────────────────────────────
 # CMV = quanto de cada real vendido vai embora só em insumo.
 # No ramo, até ~35% é saudável; acima de 45% o item quase não dá lucro.
 CMV_BOM = 35.0
 CMV_ATENCAO = 45.0
 
-# Custo primário = insumos + mão de obra sobre o preço de venda. É outra régua,
-# mais folgada, porque agora a conta inclui a gente que faz. No ramo trabalha-se
-# com algo em torno de 60%; acima de 70% o item não se paga. Mexa aqui se a
-# realidade da casa for outra — é o único lugar onde esses números existem.
+# CMV com mão de obra (o "custo primário") = insumos + mão de obra sobre o
+# preço de venda. É ESTE número que dá a cor do item: é o que sobra de verdade.
+# A régua é mais folgada que a do CMV puro porque agora a conta inclui a gente
+# que faz — no ramo trabalha-se com algo em torno de 60%; acima de 70% o item
+# não se paga. Mexa aqui se a realidade da casa for outra: é o único lugar
+# onde esses números existem.
 CUSTO_TOTAL_BOM = 60.0
 CUSTO_TOTAL_ATENCAO = 70.0
 
@@ -164,13 +269,13 @@ FAIXAS = {
 }
 
 
-def faixa_custo_total(custo_pct, tem_dados=True) -> str:
-    """Mesma ideia do CMV, na régua do custo primário (insumos + mão de obra)."""
+def faixa_cmv_total(cmv_total, tem_dados=True) -> str:
+    """Mesma ideia do CMV, na régua do CMV com mão de obra."""
     if not tem_dados:
         return "sem_dado"
-    if custo_pct <= CUSTO_TOTAL_BOM:
+    if cmv_total <= CUSTO_TOTAL_BOM:
         return "bom"
-    if custo_pct <= CUSTO_TOTAL_ATENCAO:
+    if cmv_total <= CUSTO_TOTAL_ATENCAO:
         return "atencao"
     return "ruim"
 
@@ -366,19 +471,18 @@ def _zerado():
     return {"insumos": 0.0, "mao_obra": 0.0, "total": 0.0}
 
 
-def _pior(faixa_a, faixa_b) -> str:
-    ordem = ["bom", "atencao", "ruim"]
-    return faixa_a if ordem.index(faixa_a) >= ordem.index(faixa_b) else faixa_b
-
-
 def avaliar(preco, custo_insumos, custo_mao_obra=0.0):
     """A régua do programa, num lugar só: como julgar um item.
 
-    O CMV é só de insumos — é assim que o número se compara com a régua de
-    30–35% do ramo, e é ele que aparece na coluna CMV. O custo com a mão de
-    obra junto é julgado por outra régua, a do custo primário, e vale a pior
-    das duas notas: um prato pode ter CMV ótimo e ficar 🟡 ou 🔴 porque a
-    mão de obra comeu o que sobrava.
+    Dois números, cada um com a sua régua:
+
+    - **CMV** — só insumos. Serve para comparar com os 30–35% que se falam no
+      ramo. É informação, não é ele que dá a cor.
+    - **CMV com mão de obra** — insumos + quem faz, sobre o preço. É o número
+      realista, e é ele que decide 🟢🟡🔴. Foi decisão do dono: uma bebida de
+      revenda tem CMV alto e nenhuma mão de obra, e nem por isso é um mau
+      negócio; um prato barato de insumo pode dar trabalho demais e não pagar
+      a conta. Julgar pelos dois juntos põe cozinha e bar na mesma régua.
     """
     preco = float(preco or 0)
     custo_insumos = float(custo_insumos or 0)
@@ -386,7 +490,7 @@ def avaliar(preco, custo_insumos, custo_mao_obra=0.0):
     total = custo_insumos + custo_mao_obra
     margem = preco - total
     cmv = (custo_insumos / preco * 100) if preco else 0.0
-    custo_pct = (total / preco * 100) if preco else 0.0
+    cmv_total = (total / preco * 100) if preco else 0.0
     if preco <= 0:
         situacao, faixa = "falta o preço de venda", "sem_dado"
     elif total <= 0:
@@ -394,14 +498,17 @@ def avaliar(preco, custo_insumos, custo_mao_obra=0.0):
     elif margem <= 0:
         situacao, faixa = "o preço não cobre o custo", "ruim"
     else:
-        faixa_insumos = faixa_cmv(cmv)
-        faixa = _pior(faixa_insumos, faixa_custo_total(custo_pct))
-        situacao = "a mão de obra pesa no custo" if faixa != faixa_insumos else ""
+        faixa = faixa_cmv_total(cmv_total)
+        # quando o insumo está em dia e mesmo assim o item não vai bem,
+        # quem está pesando é a mão de obra — vale dizer isso na tela
+        situacao = ("a mão de obra pesa no custo"
+                    if faixa != "bom" and custo_mao_obra > 0
+                    and faixa_cmv(cmv) == "bom" else "")
     return {"custo_insumos": custo_insumos, "custo_mao_obra": custo_mao_obra,
             "custo": total, "preco": preco, "margem": margem,
             "margem_pct": (margem / preco * 100) if preco else 0.0,
-            "cmv": cmv, "custo_pct": custo_pct, "completo": faixa != "sem_dado",
-            "situacao": situacao, "faixa": faixa}
+            "cmv": cmv, "cmv_total": cmv_total, "faixa_insumos": faixa_cmv(cmv, preco > 0),
+            "completo": faixa != "sem_dado", "situacao": situacao, "faixa": faixa}
 
 
 def analise_itens():
@@ -457,6 +564,8 @@ def simular_preco_insumo(insumo_id, novo_preco):
                       "custo_antes": antes["custo"], "custo_depois": dep["custo"],
                       "margem_antes": antes["margem"], "margem_depois": dep["margem"],
                       "cmv_antes": antes["cmv"], "cmv_depois": dep["cmv"],
+                      "cmv_total_antes": antes["cmv_total"],
+                      "cmv_total_depois": dep["cmv_total"],
                       "faixa_antes": antes["faixa"], "faixa_depois": dep["faixa"],
                       "piorou": dep["faixa"] == "ruim" and antes["faixa"] != "ruim"})
     saida.sort(key=lambda l: (0 if l["margem_depois"] else 1, l["margem_depois"],
