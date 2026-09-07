@@ -57,6 +57,10 @@ faz, sobre o preço). É o segundo que dá a cor — 🟢 até 60%, 🟡 até 70
 acima — porque é ele que diz o que sobra de verdade. Item sem preço de venda
 ou sem ficha técnica fica em ⚪, dizendo o que falta.
 
+**Esses limites são seus.** Em *Análise → Limites das cores* você define a
+partir de que ponto um item fica amarelo ou vermelho, com um botão para voltar
+ao padrão. Cada casa tem a sua realidade.
+
 ## Arquivos
 
 | Arquivo | O quê |

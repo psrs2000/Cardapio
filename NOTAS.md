@@ -79,8 +79,7 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
   - **CMV** — só insumos, na régua de 30–35% do ramo. Serve para comparar com
     o mercado; é informação, não dá a cor.
   - **CMV com mão de obra** — insumos + quem faz, sobre o preço. Régua própria
-    (`CUSTO_TOTAL_BOM`/`CUSTO_TOTAL_ATENCAO`, 60% e 70%), e é ele que decide
-    🟢🟡🔴.
+    (60% e 70% de fábrica), e é ele que decide 🟢🟡🔴.
 
   A primeira versão pegava a **pior** das duas notas, e isso era injusto com o
   bar: um long neck de CMV 45,6% e **zero** mão de obra ficava 🔴 sendo que
@@ -90,6 +89,13 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
 - **Duas abas, um cadastro só**: Insumos e Mão de obra usam a mesma classe
   (`AbaCadastro`), mudando só os rótulos e as unidades. Duas telas porque na
   cabeça dele são duas coisas; um código porque a conta é a mesma.
+- **Os limites de cor são do gestor, não meus**: os quatro percentuais moram
+  na tabela `config` e ele edita em Análise → *Limites das cores*. Os números
+  em `banco.py` viraram só o padrão de fábrica (`PADROES_LIMITES`), com botão
+  de restaurar. Quem lê é `limites()`, que guarda o valor em memória e é
+  zerada ao salvar — nenhuma tela pode ter uma régua diferente da outra.
+  A tela valida antes de gravar: verde tem de ser menor que amarelo, e mostra
+  em palavras o que os números significam enquanto ele digita.
 - **Unidades são dados, não código**: as listas de "Comprado em", "Usado em",
   "Pago por" e "Produz em" moram na tabela `unidades` e o dono edita cada uma
   pelo ⚙ ao lado do combo. As listas em `banco.py` viraram só a semente da
@@ -120,6 +126,7 @@ frente é proteção do dado (backup, senha) e conveniência (impressão).
 4. ✅ **Mão de obra**: cadastro próprio e lançamento na ficha; CMV, CMV com
    mão de obra e lucro lado a lado na Análise; unidades editáveis
 5. Backup automático e senha (mesma solução do projeto Fluxo de Caixa)
+   — **é o próximo**
 6. Impressão da ficha para a cozinha
 7. (Futuro) Self-service por quilo
 
@@ -143,6 +150,11 @@ frente é proteção do dado (backup, senha) e conveniência (impressão).
 - PyQt5 + SQLite, dados **100% locais**, distribuído como `.exe`
 - Botões coloridos: verde salvar, azul limpar, vermelho excluir
 - Valores em R$ no padrão brasileiro (`banco.fmt_moeda`)
+- **Campo de digitação nunca leva ponto de milhar** (`fmt_num_edicao`): o campo
+  precisa devolver, ao ser lido, exatamente o que mostra. Já custou um bug —
+  o rendimento aparecia como `2.500`, era relido como `2,5`, e um clique em
+  *Atualizar* gravaria 2,5 g. `parse_num` também passou a entender `2.500`
+  como dois mil e quinhentos (e a não quebrar com `1.234.567`)
 - **Confirmar antes de atualizar/excluir**; nunca deixar o usuário perder
   dado sem aviso
 - Lógica de cálculo **sempre** em `banco.py`, nunca dentro da tela — foi o que

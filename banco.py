@@ -21,6 +21,7 @@ a régua de 30–35% do ramo) e a mão de obra sai do lucro.
 """
 
 import os
+import re
 import sqlite3
 import datetime
 
@@ -64,7 +65,14 @@ def conectar():
 
 
 def init_db():
+    global _limites_em_memoria
+    _limites_em_memoria = None
     con = conectar()
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS config (
+            chave TEXT PRIMARY KEY,
+            valor TEXT
+        )""")
     con.execute("""
         CREATE TABLE IF NOT EXISTS insumos (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,17 +147,40 @@ def fmt_num(v, casas=2) -> str:
     return f"{v:,.{casas}f}".replace(",", "#").replace(".", ",").replace("#", ".")
 
 
+# "2.500" é dois mil e quinhentos, não dois e meio: ponto separando grupos de
+# exatamente três dígitos é separador de milhar no padrão brasileiro.
+_MILHAR = re.compile(r"^\d{1,3}(\.\d{3})+$")
+
+
 def parse_num(texto) -> float:
-    """Aceita '1.234,56' e '1234.56'."""
+    """Aceita '1.234,56', '2.500', '1234.56' e '2,5'."""
     s = str(texto).strip().replace("R$", "").replace(" ", "")
     if not s:
         return 0.0
+    negativo = s.startswith("-")
+    s = s.lstrip("-+")
     if "," in s and "." in s:
         s = s.replace(".", "").replace(",", ".") if s.rindex(",") > s.rindex(".") \
             else s.replace(",", "")
+    elif _MILHAR.match(s):
+        s = s.replace(".", "")
     else:
         s = s.replace(",", ".")
-    return float(s)
+    return -float(s) if negativo else float(s)
+
+
+def fmt_num_edicao(v, casas=3) -> str:
+    """Número para DENTRO de um campo de digitação: sem ponto de milhar.
+
+    O campo tem de devolver, ao ser lido de novo, exatamente o que mostra —
+    senão o dono abre um cadastro, clica em Atualizar e grava outro valor.
+    """
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return ""
+    s = f"{v:.{casas}f}".rstrip("0").rstrip(".")
+    return (s or "0").replace(".", ",")
 
 
 def custo_unitario(preco_compra, qtd_util) -> float:
@@ -252,10 +283,96 @@ CMV_ATENCAO = 45.0
 # preço de venda. É ESTE número que dá a cor do item: é o que sobra de verdade.
 # A régua é mais folgada que a do CMV puro porque agora a conta inclui a gente
 # que faz — no ramo trabalha-se com algo em torno de 60%; acima de 70% o item
-# não se paga. Mexa aqui se a realidade da casa for outra: é o único lugar
-# onde esses números existem.
+# não se paga.
 CUSTO_TOTAL_BOM = 60.0
 CUSTO_TOTAL_ATENCAO = 70.0
+
+# Os quatro números acima são só o PADRÃO DE FÁBRICA. Quem manda é o gestor:
+# cada casa tem a sua realidade, e ele edita os limites pela tela (Análise →
+# "Limites das cores"), que grava na tabela `config`.
+PADROES_LIMITES = {
+    "cmv_bom": CMV_BOM,
+    "cmv_atencao": CMV_ATENCAO,
+    "cmv_total_bom": CUSTO_TOTAL_BOM,
+    "cmv_total_atencao": CUSTO_TOTAL_ATENCAO,
+}
+
+ROTULOS_LIMITES = {
+    "cmv_bom": "CMV — até quanto é verde",
+    "cmv_atencao": "CMV — até quanto é amarelo",
+    "cmv_total_bom": "CMV com mão de obra — até quanto é verde",
+    "cmv_total_atencao": "CMV com mão de obra — até quanto é amarelo",
+}
+
+_limites_em_memoria = None
+
+
+def limites():
+    """Os quatro limites de cor em vigor — os do gestor, ou os de fábrica."""
+    global _limites_em_memoria
+    if _limites_em_memoria is None:
+        atual = dict(PADROES_LIMITES)
+        try:
+            con = conectar()
+            for chave, valor in con.execute("SELECT chave, valor FROM config"):
+                if chave in atual:
+                    try:
+                        atual[chave] = float(valor)
+                    except (TypeError, ValueError):
+                        pass
+            con.close()
+        except sqlite3.Error:
+            pass                      # banco ainda não criado: usa o padrão
+        _limites_em_memoria = atual
+    return _limites_em_memoria
+
+
+def validar_limites(novos):
+    """Devolve a lista de problemas — vazia quer dizer que dá para salvar."""
+    erros = []
+    for chave in PADROES_LIMITES:
+        v = novos.get(chave)
+        if v is None or v <= 0 or v >= 100:
+            erros.append(f"{ROTULOS_LIMITES[chave]}: informe um número"
+                         " entre 1 e 99.")
+    if erros:
+        return erros
+    if novos["cmv_bom"] >= novos["cmv_atencao"]:
+        erros.append("No CMV, o limite do verde tem de ser menor que o do"
+                     " amarelo.")
+    if novos["cmv_total_bom"] >= novos["cmv_total_atencao"]:
+        erros.append("No CMV com mão de obra, o limite do verde tem de ser"
+                     " menor que o do amarelo.")
+    return erros
+
+
+def salvar_limites(novos):
+    """Grava os limites do gestor. Devolve a lista de problemas (vazia = ok)."""
+    global _limites_em_memoria
+    erros = validar_limites(novos)
+    if erros:
+        return erros
+    con = conectar()
+    con.executemany(
+        "INSERT INTO config (chave, valor) VALUES (?,?)"
+        " ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",
+        [(chave, str(novos[chave])) for chave in PADROES_LIMITES])
+    con.commit()
+    con.close()
+    _limites_em_memoria = None
+    return []
+
+
+def restaurar_limites():
+    """Volta aos números de fábrica."""
+    global _limites_em_memoria
+    con = conectar()
+    con.execute("DELETE FROM config WHERE chave IN (%s)" %
+                ",".join("?" * len(PADROES_LIMITES)), tuple(PADROES_LIMITES))
+    con.commit()
+    con.close()
+    _limites_em_memoria = None
+    return dict(PADROES_LIMITES)
 
 FAIXAS = {
     "bom":      {"sinal": "🟢", "rotulo": "Saudável",
@@ -273,9 +390,10 @@ def faixa_cmv_total(cmv_total, tem_dados=True) -> str:
     """Mesma ideia do CMV, na régua do CMV com mão de obra."""
     if not tem_dados:
         return "sem_dado"
-    if cmv_total <= CUSTO_TOTAL_BOM:
+    lim = limites()
+    if cmv_total <= lim["cmv_total_bom"]:
         return "bom"
-    if cmv_total <= CUSTO_TOTAL_ATENCAO:
+    if cmv_total <= lim["cmv_total_atencao"]:
         return "atencao"
     return "ruim"
 
@@ -284,13 +402,15 @@ def faixa_cmv(cmv, tem_dados=True) -> str:
     """Classifica o CMV em 'bom', 'atencao', 'ruim' ou 'sem_dado'.
 
     Sem preço de venda ou sem ficha técnica não dá para julgar o item —
-    mostrar 0% de CMV nesse caso enganaria o usuário.
+    mostrar 0% de CMV nesse caso enganaria o usuário. Os limites são os que o
+    gestor definiu na tela (veja `limites`).
     """
     if not tem_dados:
         return "sem_dado"
-    if cmv <= CMV_BOM:
+    lim = limites()
+    if cmv <= lim["cmv_bom"]:
         return "bom"
-    if cmv <= CMV_ATENCAO:
+    if cmv <= lim["cmv_atencao"]:
         return "atencao"
     return "ruim"
 

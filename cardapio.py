@@ -417,9 +417,9 @@ class AbaCadastro(QWidget):
         _, nome, un_c, preco, un_u, qtd, forn, _atu, _tipo = dados
         self._ed_nome.setText(nome)
         self._cb_un_compra.setCurrentText(un_c)
-        self._ed_preco.setText(banco.fmt_num(preco))
+        self._ed_preco.setText(banco.fmt_num_edicao(preco, 2))
         self._cb_un_uso.setCurrentText(un_u)
-        self._ed_qtd.setText(banco.fmt_num(qtd, 3).rstrip("0").rstrip(","))
+        self._ed_qtd.setText(banco.fmt_num_edicao(qtd))
         self._ed_forn.setText(forn or "")
         self._btn_salvar.setText("Atualizar")
 
@@ -604,7 +604,7 @@ class AbaCardapio(QWidget):
         self._ed_item.setText(self._tab_itens.item(r, 1).text())
         self._cb_cat.setCurrentText(self._tab_itens.item(r, 2).text())
         preco = self._tab_itens.item(r, 3).data(Qt.UserRole)
-        self._ed_preco_v.setText(banco.fmt_num(preco or 0))
+        self._ed_preco_v.setText(banco.fmt_num_edicao(preco or 0, 2))
         self._btn_item.setText("Atualizar")
         self._lbl_titulo.setText(f"Ficha técnica — {self._ed_item.text()}")
         self.recarregar_ficha()
@@ -895,6 +895,115 @@ class DialogoSimulacao(QDialog):
         self.accept()
 
 
+class DialogoLimites(QDialog):
+    """Onde o gestor decide a partir de que ponto o item fica 🟡 e 🔴."""
+
+    ORDEM = ["cmv_bom", "cmv_atencao", "cmv_total_bom", "cmv_total_atencao"]
+
+    def __init__(self, pai):
+        super().__init__(pai)
+        self.mudou = False
+        self.setWindowTitle("Limites das cores")
+        self.resize(610, 400)
+
+        root = QVBoxLayout(self)
+        topo = QLabel(
+            "Cada casa tem a sua realidade — <b>quem decide estes limites é "
+            "você</b>.<br><br>"
+            "O <b>CMV</b> conta só os insumos e serve para comparar com o "
+            "mercado (costuma-se falar em 30–35%).<br>"
+            "O <b>CMV com mão de obra</b> soma quem faz o prato, por isso a "
+            "régua é mais folgada — e é ele que dá a cor do item.")
+        topo.setWordWrap(True)
+        topo.setStyleSheet("font-size:12px;padding:8px;background:#e3f2fd;"
+                           "border:1px solid #90caf9;border-radius:6px;")
+        root.addWidget(topo)
+
+        grade = QGridLayout()
+        grade.setSpacing(8)
+        self._campos = {}
+        atuais = banco.limites()
+        for i, chave in enumerate(self.ORDEM):
+            sinal = banco.FAIXAS["bom" if chave.endswith("_bom") else "atencao"]["sinal"]
+            rot = QLabel(f"{sinal} {banco.ROTULOS_LIMITES[chave]}:")
+            ed = QLineEdit(banco.fmt_num_edicao(atuais[chave], 1))
+            ed.setFixedWidth(80)
+            ed.setAlignment(Qt.AlignRight)
+            self._campos[chave] = ed
+            grade.addWidget(rot, i, 0, Qt.AlignRight)
+            grade.addWidget(ed, i, 1)
+            grade.addWidget(QLabel("%"), i, 2, Qt.AlignLeft)
+            if i == 1:
+                grade.addWidget(QLabel(" "), i + 1, 0)
+        grade.setColumnStretch(3, 1)
+        root.addLayout(grade)
+
+        self._exemplo = QLabel("")
+        self._exemplo.setWordWrap(True)
+        root.addWidget(self._exemplo)
+        for ed in self._campos.values():
+            ed.textChanged.connect(self._preview)
+        self._preview()
+
+        root.addStretch()
+        botoes = QHBoxLayout()
+        botoes.addWidget(_btn("Restaurar padrão", "#607D8B", self._restaurar, 180))
+        botoes.addStretch()
+        botoes.addWidget(_btn("Salvar", "#4CAF50", self._salvar, 110))
+        botoes.addWidget(_btn("Fechar", "#2196F3", self.reject, 110))
+        root.addLayout(botoes)
+
+    def _lidos(self):
+        valores = {}
+        for chave, ed in self._campos.items():
+            try:
+                valores[chave] = banco.parse_num(ed.text())
+            except ValueError:
+                valores[chave] = None
+        return valores
+
+    def _preview(self):
+        """Mostra em palavras o que os números digitados querem dizer."""
+        v = self._lidos()
+        erros = banco.validar_limites(v)
+        if erros:
+            self._exemplo.setText("⚠️ " + erros[0])
+            self._exemplo.setStyleSheet(
+                "font-size:12px;padding:8px;color:#c62828;background:#ffebee;"
+                "border:1px solid #c62828;border-radius:6px;")
+            return
+        f = banco.FAIXAS
+        self._exemplo.setText(
+            f"Com esses números, um item fica {f['bom']['sinal']} <b>verde</b> "
+            f"até {banco.fmt_num_edicao(v['cmv_total_bom'], 1)}% de custo com "
+            f"mão de obra, {f['atencao']['sinal']} <b>amarelo</b> até "
+            f"{banco.fmt_num_edicao(v['cmv_total_atencao'], 1)}% e "
+            f"{f['ruim']['sinal']} <b>vermelho</b> acima disso.")
+        self._exemplo.setStyleSheet(
+            "font-size:12px;padding:8px;color:#1b5e20;background:#e8f5e9;"
+            "border:1px solid #1b5e20;border-radius:6px;")
+
+    def _salvar(self):
+        erros = banco.salvar_limites(self._lidos())
+        if erros:
+            QMessageBox.warning(self, "Atenção", "\n\n".join(erros))
+            return
+        self.mudou = True
+        self.accept()
+
+    def _restaurar(self):
+        if QMessageBox.question(
+                self, "Confirmar",
+                "Voltar aos limites de fábrica?\n\n"
+                "CMV: 35% e 45%\nCMV com mão de obra: 60% e 70%",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        padroes = banco.restaurar_limites()
+        for chave, ed in self._campos.items():
+            ed.setText(banco.fmt_num_edicao(padroes[chave], 1))
+        self.mudou = True
+
+
 class AbaAnalise(QWidget):
     """Ranking de margem e o alerta dos itens que dão pouco lucro."""
 
@@ -935,6 +1044,8 @@ class AbaAnalise(QWidget):
         filtros.addSpacing(16)
         filtros.addWidget(QLabel("Ordenar por:")); filtros.addWidget(self._cb_ordem)
         filtros.addStretch()
+        filtros.addWidget(_btn("Limites das cores", "#607D8B",
+                               self._editar_limites, 160))
         filtros.addWidget(_btn("Atualizar", "#2196F3", self.recarregar, 110))
         root.addLayout(filtros)
 
@@ -976,6 +1087,14 @@ class AbaAnalise(QWidget):
         self._status = QLabel("")
         self._status.setStyleSheet("color:#555;font-size:11px;")
         root.addWidget(self._status)
+
+    def _editar_limites(self):
+        dlg = DialogoLimites(self)
+        dlg.exec_()
+        if dlg.mudou:
+            self.recarregar()
+            if self._ao_mudar:
+                self._ao_mudar()
 
     # ── ranking ───────────────────────────────────────────
     def _preencher_tabela(self):
@@ -1082,8 +1201,8 @@ class AbaAnalise(QWidget):
             f = banco.FAIXAS["ruim"]
             texto = ("⚠️ <b>Estes itens dão pouco lucro</b> — o custo com a mão "
                      "de obra passa de "
-                     f"{banco.fmt_num(banco.CUSTO_TOTAL_ATENCAO, 0)}% do preço: "
-                     + ", ".join(ruins))
+                     f"{banco.fmt_num_edicao(banco.limites()['cmv_total_atencao'], 1)}"
+                     "% do preço: " + ", ".join(ruins))
         elif any(l["completo"] for l in self._dados):
             f = banco.FAIXAS["bom"]
             texto = "✅ Nenhum item com lucro baixo. O cardápio está saudável."
