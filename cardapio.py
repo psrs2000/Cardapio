@@ -21,15 +21,30 @@ from PyQt5.QtGui import QColor, QBrush, QFont
 import banco
 
 
+def _tom(cor, fator) -> str:
+    """A mesma cor mais escura (fator < 1), para o mouse em cima e o clique.
+
+    Tem de ser calculada aqui: grudar um 'dd' no fim do código da cor, como já
+    esteve, faz o Qt ler #AARRGGBB — o primeiro par vira transparência, a cor
+    troca e o botão quase some. O verde-azulado ficava com 0% de opacidade.
+    """
+    cor = cor.lstrip("#")
+    r, g, b = (int(cor[i:i + 2], 16) for i in (0, 2, 4))
+    escurece = lambda v: max(0, min(255, round(v * fator)))
+    return f"#{escurece(r):02x}{escurece(g):02x}{escurece(b):02x}"
+
+
 def _btn(texto, cor, slot, largura=130):
     b = QPushButton(texto)
     b.setFixedHeight(30)
     b.setFixedWidth(largura)
+    b.setCursor(Qt.PointingHandCursor)
     b.setStyleSheet(
         f"QPushButton{{background:{cor};color:white;border:none;"
         f"border-radius:4px;font-weight:bold;}}"
-        f"QPushButton:hover{{background:{cor}dd;}}"
-        f"QPushButton:disabled{{background:#bdbdbd;}}")
+        f"QPushButton:hover{{background:{_tom(cor, 0.85)};}}"
+        f"QPushButton:pressed{{background:{_tom(cor, 0.70)};}}"
+        f"QPushButton:disabled{{background:#bdbdbd;color:#f5f5f5;}}")
     b.clicked.connect(slot)
     return b
 

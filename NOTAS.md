@@ -171,7 +171,12 @@ frente é proteção do dado (backup, senha) e conveniência (impressão).
 
 - Interface e código em **português**
 - PyQt5 + SQLite, dados **100% locais**, distribuído como `.exe`
-- Botões coloridos: verde salvar, azul limpar, vermelho excluir
+- Botões coloridos: verde salvar, azul limpar, vermelho excluir. O tom de
+  passar o mouse e o de clicar saem calculados por `_tom()`, escurecendo a
+  própria cor. **Nunca** grude dígitos no fim do código da cor para dar
+  transparência (`#00897B` + `dd`): o Qt lê oito dígitos como #AARRGGBB, o
+  primeiro par vira opacidade e a cor troca — foi assim que o botão
+  "Ver efeito" ficou com 0% de opacidade e sumia ao passar o mouse
 - Valores em R$ no padrão brasileiro (`banco.fmt_moeda`)
 - **Campo de digitação nunca leva ponto de milhar** (`fmt_num_edicao`): o campo
   precisa devolver, ao ser lido, exatamente o que mostra. Já custou um bug —
