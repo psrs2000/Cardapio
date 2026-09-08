@@ -96,6 +96,15 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
   zerada ao salvar — nenhuma tela pode ter uma régua diferente da outra.
   A tela valida antes de gravar: verde tem de ser menor que amarelo, e mostra
   em palavras o que os números significam enquanto ele digita.
+- **Distribuição em um arquivo só** (`gerar_exe.bat` → PyInstaller
+  `--onefile --windowed`): para quem não tem intimidade com informática, uma
+  pasta cheia de DLLs é convite a apagar o arquivo errado. Custa uns segundos
+  a mais para abrir e vale a pena. O `--windowed` evita a janela preta de
+  console atrás do programa.
+  O `.exe` **precisa ficar em pasta própria** (`C:\Cardapio`), nunca em
+  *Arquivos de Programas*: os dados nascem ao lado dele e o Windows bloqueia
+  escrita ali. Testado empacotando de verdade — o banco é criado na pasta do
+  executável, que é o que `_app_dir()` promete.
 - **Senha e backup vieram prontos do Fluxo de Caixa** (SHA-256 com salt em
   `config.json`, backup ao fechar com rotação de 10, `_app_dir()` para achar a
   pasta certa quando virar `.exe`). Não reinventar o que o projeto irmão já

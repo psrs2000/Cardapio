@@ -35,6 +35,31 @@ pip install -r requirements.txt
 python cardapio.py
 ```
 
+## Gerar o programa (.exe) para Windows
+
+Dê **dois cliques em `gerar_exe.bat`**. Ele instala o que falta, empacota tudo
+e avisa onde ficou o programa (`dist\Cardapio.exe`) — um arquivo só, que roda
+em qualquer Windows, sem precisar de Python instalado na máquina de destino.
+
+Depois:
+
+1. Crie uma pasta só dele, por exemplo `C:\Cardapio`
+2. Copie o `Cardapio.exe` para lá
+3. Botão direito no arquivo → *Enviar para → Área de trabalho (criar atalho)*
+
+**Onde ficam os seus dados:** na mesma pasta do `Cardapio.exe` — o banco
+(`cardapio.db`), as configurações (`config.json`) e a pasta `backups`. Por isso
+não vale pôr o programa em *Arquivos de Programas*: o Windows não deixa gravar
+lá. Para levar tudo para outro computador, basta copiar a pasta inteira.
+
+Duas coisas normais que assustam na primeira vez: o arquivo tem uns 50 MB (leva
+o Python e o PyQt5 dentro) e demora uns segundos para abrir na primeira vez.
+Alguns antivírus implicam com programas empacotados assim — se o seu reclamar,
+é falso positivo, e você libera nas exceções dele.
+
+Quer um ícone próprio? Ponha um arquivo chamado `icone.ico` na pasta do projeto
+antes de gerar; o script usa sozinho.
+
 ## O recurso mais útil: "e se a carne subir?"
 
 Na aba **Análise**, escolha o insumo, digite o novo preço de compra e clique em
