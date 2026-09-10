@@ -54,7 +54,8 @@ def _btn(texto, cor, slot, largura=130):
 #  O mesmo cadastro serve aos dois: ambos são "preço ÷ quantidade
 #  útil". O que muda é só a conversa da tela.
 # ═══════════════════════════════════════════════════════════
-ICONES_TIPO = {banco.TIPO_INSUMO: "🥕", banco.TIPO_MAO_OBRA: "👨‍🍳"}
+ICONES_TIPO = {banco.TIPO_INSUMO: "🥕", banco.TIPO_PREPARO: "🥣",
+               banco.TIPO_MAO_OBRA: "👨‍🍳"}
 
 CFG_CADASTRO = {
     banco.TIPO_INSUMO: {
@@ -463,6 +464,387 @@ class AbaCadastro(QWidget):
 
 
 # ═══════════════════════════════════════════════════════════
+#  ABA FEITO NA CASA
+#  O purê é um insumo cujo preço não se digita: sai da receita
+#  dele. Por isso a tela é irmã da aba Cardápio, não da de
+#  Insumos — o que se monta aqui é uma ficha.
+# ═══════════════════════════════════════════════════════════
+COLS_RECEITA = ["ficha_id", "insumo_id", "O que entra", "Quantidade",
+                "Custo unit.", "Custo"]
+
+
+class AbaFeitoNaCasa(QWidget):
+    """Purê, molho, farofa: o que a casa produz e usa em vários pratos."""
+
+    def __init__(self, ao_mudar=None):
+        super().__init__()
+        self._preparo_id = None
+        self._ao_mudar = ao_mudar
+        self._build()
+        self.recarregar()
+
+    def _build(self):
+        root = QHBoxLayout(self)
+        root.setContentsMargins(10, 8, 10, 8)
+
+        # ── esquerda: o que a casa faz ────────────────────
+        esq = QVBoxLayout()
+        grp = QGroupBox("Feito na casa")
+        f = QGridLayout(grp)
+        self._ed_nome = QLineEdit(); self._ed_nome.setFixedWidth(200)
+        self._ed_nome.setPlaceholderText("Purê de batata")
+        self._cb_unidade = QComboBox(); self._cb_unidade.setFixedWidth(120)
+        self._ed_rende = QLineEdit(); self._ed_rende.setFixedWidth(120)
+        self._ed_rende.setPlaceholderText("2.200")
+        self._ed_obs = QLineEdit(); self._ed_obs.setFixedWidth(200)
+
+        caixa_un = QWidget()
+        lay_un = QHBoxLayout(caixa_un)
+        lay_un.setContentsMargins(0, 0, 0, 0); lay_un.setSpacing(4)
+        lay_un.addWidget(self._cb_unidade)
+        b_un = _btn("⚙", "#607D8B", self._editar_unidades, 32)
+        b_un.setToolTip("Editar as opções de \"Medido em\"")
+        lay_un.addWidget(b_un); lay_un.addStretch()
+
+        for i, (rot, w) in enumerate([("Nome:", self._ed_nome),
+                                      ("Medido em:", caixa_un),
+                                      ("Rende quanto?:", self._ed_rende),
+                                      ("Observação:", self._ed_obs)]):
+            f.addWidget(QLabel(rot), i, 0, Qt.AlignRight)
+            f.addWidget(w, i, 1)
+        self._ed_rende.textChanged.connect(self._atualizar_painel)
+        bl = QHBoxLayout()
+        self._btn_salvar = _btn("Salvar", "#4CAF50", self._salvar, 100)
+        bl.addWidget(self._btn_salvar)
+        bl.addWidget(_btn("Novo", "#2196F3", self.limpar, 90))
+        bl.addWidget(_btn("Excluir", "#f44336", self._excluir, 90))
+        f.addLayout(bl, 4, 0, 1, 2)
+        esq.addWidget(grp)
+
+        dica = QLabel(
+            "O que você mesmo faz e usa em vários pratos: purê, molho, farofa, "
+            "massa. Monte a receita ao lado e o custo se forma sozinho — daí "
+            "ele entra na ficha dos pratos como se fosse um ingrediente.")
+        dica.setWordWrap(True)
+        dica.setStyleSheet(
+            "color:#555;font-size:11px;background:#fff8e1;"
+            "border:1px solid #ffe082;border-radius:6px;padding:8px;")
+        esq.addWidget(dica)
+
+        self._tab_preparos = QTableWidget(0, 4)
+        self._tab_preparos.setHorizontalHeaderLabels(
+            ["id", "Feito na casa", "Rende", "Custo real"])
+        self._tab_preparos.setColumnHidden(0, True)
+        self._tab_preparos.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._tab_preparos.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._tab_preparos.setAlternatingRowColors(True)
+        self._tab_preparos.verticalHeader().setVisible(False)
+        self._tab_preparos.itemSelectionChanged.connect(self._selecionar)
+        esq.addWidget(self._tab_preparos, 1)
+        root.addLayout(esq, 2)
+
+        # ── direita: a receita ────────────────────────────
+        dir_ = QVBoxLayout()
+        self._lbl_titulo = QLabel("Selecione ou crie algo para montar a receita")
+        self._lbl_titulo.setStyleSheet(
+            "font-size:15px;font-weight:bold;color:#1565C0;padding:4px;")
+        dir_.addWidget(self._lbl_titulo)
+
+        grp_add = QGroupBox("Adicionar à receita")
+        ga = QHBoxLayout(grp_add)
+        self._cb_insumo = QComboBox(); self._cb_insumo.setMinimumWidth(240)
+        self._ed_qtd = QLineEdit(); self._ed_qtd.setFixedWidth(90)
+        self._ed_qtd.setPlaceholderText("2.000")
+        self._lbl_un = QLabel("—"); self._lbl_un.setFixedWidth(50)
+        self._lbl_un.setStyleSheet("color:#555;font-weight:bold;")
+        self._cb_insumo.currentIndexChanged.connect(self._mostrar_unidade)
+        self._ed_qtd.returnPressed.connect(self._adicionar)
+        ga.addWidget(QLabel("O que entra:")); ga.addWidget(self._cb_insumo)
+        ga.addWidget(QLabel("Qtd:")); ga.addWidget(self._ed_qtd)
+        ga.addWidget(self._lbl_un)
+        ga.addWidget(_btn("Adicionar", "#00897B", self._adicionar, 110))
+        ga.addStretch()
+        dir_.addWidget(grp_add)
+
+        self._tab_receita = QTableWidget(0, len(COLS_RECEITA))
+        self._tab_receita.setHorizontalHeaderLabels(COLS_RECEITA)
+        self._tab_receita.setColumnHidden(0, True)
+        self._tab_receita.setColumnHidden(1, True)
+        self._tab_receita.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._tab_receita.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._tab_receita.setAlternatingRowColors(True)
+        self._tab_receita.verticalHeader().setVisible(False)
+        dir_.addWidget(self._tab_receita, 1)
+
+        lr = QHBoxLayout()
+        lr.addWidget(_btn("Remover da receita", "#f44336", self._remover, 200))
+        lr.addStretch()
+        dir_.addLayout(lr)
+
+        self._painel = QLabel("—")
+        self._painel.setAlignment(Qt.AlignCenter)
+        self._painel.setStyleSheet(
+            "font-size:14px;padding:10px;border:2px solid #1565C0;"
+            "border-radius:8px;background:#f5f5f5;")
+        dir_.addWidget(self._painel)
+        root.addLayout(dir_, 3)
+
+    # ── cadastro ──────────────────────────────────────────
+    def limpar(self):
+        self._preparo_id = None
+        self._ed_nome.clear(); self._ed_rende.clear(); self._ed_obs.clear()
+        self._cb_unidade.setCurrentIndex(0)
+        self._btn_salvar.setText("Salvar")
+        self._tab_preparos.clearSelection()
+        self._lbl_titulo.setText("Selecione ou crie algo para montar a receita")
+        self._tab_receita.setRowCount(0)
+        self._painel.setText("—")
+
+    def _salvar(self):
+        nome = self._ed_nome.text().strip()
+        if not nome:
+            QMessageBox.warning(self, "Atenção",
+                                "Informe o nome (purê de batata, molho…).")
+            return
+        try:
+            rende = banco.parse_num(self._ed_rende.text())
+        except ValueError:
+            QMessageBox.warning(self, "Atenção", "O rendimento deve ser um número.")
+            return
+        if rende <= 0:
+            QMessageBox.warning(
+                self, "Atenção",
+                "Informe quanto uma receita rende — 2.200 g de purê, por "
+                "exemplo.\nÉ esse número que transforma o custo da panela em "
+                "custo por grama.")
+            return
+        if self._preparo_id and QMessageBox.question(
+                self, "Confirmar", "Atualizar?\n\nO custo de todos os pratos "
+                "que usam isto será recalculado.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            novo = banco.salvar_insumo(
+                self._preparo_id, nome, banco.UNIDADE_COMPRA_PREPARO, 0,
+                self._cb_unidade.currentText(), rende,
+                self._ed_obs.text().strip(), banco.TIPO_PREPARO)
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Não foi possível salvar:\n{e}")
+            return
+        banco.recalcular_preparos()
+        self.recarregar()
+        self._selecionar_por_id(novo)
+        if self._ao_mudar:
+            self._ao_mudar()
+
+    def _excluir(self):
+        if not self._preparo_id:
+            QMessageBox.information(self, "Info", "Selecione um item na lista.")
+            return
+        if QMessageBox.question(
+                self, "Confirmar", "Excluir isto e a receita dele?",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        usos = banco.excluir_insumo(self._preparo_id)
+        if usos:
+            QMessageBox.warning(
+                self, "Em uso", "Não dá para excluir: está sendo usado em\n\n• "
+                + "\n• ".join(usos) + "\n\nRemova dessas fichas primeiro.")
+            return
+        self.limpar()
+        self.recarregar()
+        if self._ao_mudar:
+            self._ao_mudar()
+
+    def _selecionar(self):
+        sel = self._tab_preparos.selectionModel().selectedRows()
+        if not sel:
+            return
+        self._preparo_id = int(self._tab_preparos.item(sel[0].row(), 0).text())
+        dados = banco.obter_insumo(self._preparo_id)
+        if not dados:
+            return
+        _, nome, _un_c, _preco, un_uso, rende, obs, _atu, _tipo = dados
+        self._ed_nome.setText(nome)
+        self._cb_unidade.setCurrentText(un_uso)
+        self._ed_rende.setText(banco.fmt_num_edicao(rende))
+        self._ed_obs.setText(obs or "")
+        self._btn_salvar.setText("Atualizar")
+        self._lbl_titulo.setText(f"Receita — {nome}")
+        self.recarregar_receita()
+
+    def _selecionar_por_id(self, iid):
+        for i in range(self._tab_preparos.rowCount()):
+            if self._tab_preparos.item(i, 0).text() == str(iid):
+                self._tab_preparos.selectRow(i)
+                return
+
+    def abrir(self, iid):
+        self._selecionar_por_id(iid)
+
+    def _editar_unidades(self):
+        dlg = DialogoUnidades(self, banco.TIPO_PREPARO, banco.CAMPO_USO,
+                              "Medido em")
+        dlg.exec_()
+        if not dlg.mudou:
+            return
+        atual = self._cb_unidade.currentText()
+        self._cb_unidade.clear()
+        self._cb_unidade.addItems(
+            banco.listar_unidades(banco.TIPO_PREPARO, banco.CAMPO_USO))
+        i = self._cb_unidade.findText(atual)
+        self._cb_unidade.setCurrentIndex(i if i >= 0 else 0)
+        self.recarregar()
+        if self._ao_mudar:
+            self._ao_mudar()
+
+    # ── receita ───────────────────────────────────────────
+    def _mostrar_unidade(self):
+        dados = self._cb_insumo.currentData()
+        self._lbl_un.setText(dados[1] if dados else "—")
+
+    def _adicionar(self):
+        if not self._preparo_id:
+            QMessageBox.information(
+                self, "Info", "Primeiro salve o que você está fazendo, depois "
+                "monte a receita.")
+            return
+        dados = self._cb_insumo.currentData()
+        if not dados:
+            QMessageBox.information(self, "Info", "Cadastre insumos primeiro.")
+            return
+        try:
+            qtd = banco.parse_num(self._ed_qtd.text())
+        except ValueError:
+            QMessageBox.warning(self, "Atenção", "Quantidade deve ser um número.")
+            return
+        if qtd <= 0:
+            QMessageBox.warning(self, "Atenção",
+                                "Informe uma quantidade maior que zero.")
+            return
+        erro = banco.salvar_componente_preparo(self._preparo_id, dados[0], qtd)
+        if erro:
+            QMessageBox.warning(self, "Não dá para incluir", erro)
+            return
+        self._ed_qtd.clear()
+        self.recarregar_receita()
+        self.recarregar()
+        if self._ao_mudar:
+            self._ao_mudar()
+
+    def _remover(self):
+        sel = self._tab_receita.selectionModel().selectedRows()
+        if not sel:
+            QMessageBox.information(self, "Info", "Selecione uma linha da receita.")
+            return
+        banco.excluir_componente_preparo(
+            int(self._tab_receita.item(sel[0].row(), 0).text()))
+        self.recarregar_receita()
+        self.recarregar()
+        if self._ao_mudar:
+            self._ao_mudar()
+
+    def recarregar_receita(self):
+        self._tab_receita.setRowCount(0)
+        if not self._preparo_id:
+            return
+        for c in banco.listar_ficha_preparo(self._preparo_id):
+            i = self._tab_receita.rowCount()
+            self._tab_receita.insertRow(i)
+            icone = ICONES_TIPO.get(c["tipo"], "")
+            vals = [str(c["ficha_id"]), str(c["insumo_id"]),
+                    f"{icone} {c['insumo']}",
+                    f"{banco.fmt_num(c['quantidade'], 2).rstrip('0').rstrip(',')}"
+                    f" {c['unidade']}",
+                    banco.fmt_moeda(c["custo_unitario"], 4),
+                    banco.fmt_moeda(c["custo"])]
+            for j, v in enumerate(vals):
+                it = QTableWidgetItem(v)
+                if j >= 3:
+                    it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self._tab_receita.setItem(i, j, it)
+        self._tab_receita.resizeColumnsToContents()
+        self._atualizar_painel()
+
+    def _atualizar_painel(self):
+        if not self._preparo_id:
+            return
+        receita = banco.custo_da_receita(self._preparo_id)
+        try:
+            rende = banco.parse_num(self._ed_rende.text())
+        except ValueError:
+            rende = 0.0
+        unidade = self._cb_unidade.currentText()
+        partes = [f"Insumos <b>{banco.fmt_moeda(receita['insumos'])}</b>"]
+        if receita["mao_obra"]:
+            partes.append(f"Mão de obra <b>{banco.fmt_moeda(receita['mao_obra'])}</b>")
+        partes.append(f"Custa <b>{banco.fmt_moeda(receita['total'])}</b> a receita")
+        if rende > 0 and receita["total"] > 0:
+            por_unidade = receita["total"] / rende
+            rodape = ("<span style='font-size:12px'>rende "
+                      f"{banco.fmt_num(rende, 2).rstrip('0').rstrip(',')} "
+                      f"{unidade} → </span>"
+                      "<span style='font-size:20px'>"
+                      f"{banco.fmt_moeda(por_unidade, 4)} por {unidade}</span>")
+        elif receita["total"] <= 0:
+            rodape = ("<span style='font-size:12px'>monte a receita ao lado para "
+                      "ver o custo</span>")
+        else:
+            rodape = ("<span style='font-size:12px'>informe o rendimento para ver "
+                      "o custo por unidade</span>")
+        self._painel.setText(" &nbsp;•&nbsp; ".join(partes) + "<br>" + rodape)
+
+    # ── recarga geral ─────────────────────────────────────
+    def recarregar(self):
+        if not self._cb_unidade.count():
+            self._cb_unidade.addItems(
+                banco.listar_unidades(banco.TIPO_PREPARO, banco.CAMPO_USO))
+
+        # o que pode entrar numa receita: tudo, menos ele mesmo
+        atual = self._cb_insumo.currentData()
+        self._cb_insumo.blockSignals(True)
+        self._cb_insumo.clear()
+        for (iid, nome, _uc, _preco, un_uso, _qtd, _f, _a, tipo) in banco.listar_insumos():
+            if iid == self._preparo_id:
+                continue
+            cu = banco.custo_unitario_do_insumo(iid)
+            self._cb_insumo.addItem(
+                f"{ICONES_TIPO.get(tipo, '')} {nome}  ({banco.fmt_moeda(cu, 4)}"
+                f"/{un_uso})", (iid, un_uso))
+        if atual:
+            for i in range(self._cb_insumo.count()):
+                if self._cb_insumo.itemData(i)[0] == atual[0]:
+                    self._cb_insumo.setCurrentIndex(i)
+                    break
+        self._cb_insumo.blockSignals(False)
+        self._mostrar_unidade()
+
+        guardado = self._preparo_id
+        self._tab_preparos.blockSignals(True)
+        self._tab_preparos.setRowCount(0)
+        for (iid, nome, _uc, _preco, un_uso, rende, _f, _a, _t) in \
+                banco.listar_insumos(banco.TIPO_PREPARO):
+            i = self._tab_preparos.rowCount()
+            self._tab_preparos.insertRow(i)
+            cu = banco.custo_unitario_do_insumo(iid)
+            vals = [str(iid), nome,
+                    f"{banco.fmt_num(rende, 2).rstrip('0').rstrip(',')} {un_uso}",
+                    f"{banco.fmt_moeda(cu, 4)} / {un_uso}"]
+            for j, v in enumerate(vals):
+                it = QTableWidgetItem(v)
+                if j == 3:
+                    it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    it.setForeground(QBrush(QColor("#1565C0")))
+                    it.setFont(QFont("Segoe UI", 9, QFont.Bold))
+                self._tab_preparos.setItem(i, j, it)
+        self._tab_preparos.resizeColumnsToContents()
+        self._tab_preparos.blockSignals(False)
+        self._preparo_id = guardado
+        if self._preparo_id:
+            self.recarregar_receita()
+
+
+# ═══════════════════════════════════════════════════════════
 #  ABA CARDÁPIO  (ficha técnica)
 # ═══════════════════════════════════════════════════════════
 COLS_FICHA = ["ficha_id", "insumo_id", "O que entra", "Quantidade",
@@ -829,6 +1211,20 @@ class DialogoSimulacao(QDialog):
             "border:1px solid #90caf9;border-radius:6px;")
         root.addWidget(topo)
 
+        preparos = banco.preparos_afetados(insumo_id, novo_preco)
+        if preparos:
+            texto = " &nbsp;•&nbsp; ".join(
+                f"<b>{p['nome']}</b> {banco.fmt_moeda(p['antes'], 4)} → "
+                f"{banco.fmt_moeda(p['depois'], 4)}/{p['unidade']}"
+                for p in preparos)
+            lbl_prep = QLabel(f"{ICONES_TIPO[banco.TIPO_PREPARO]} Feito na casa "
+                              f"que muda junto: {texto}")
+            lbl_prep.setWordWrap(True)
+            lbl_prep.setStyleSheet(
+                "font-size:12px;padding:6px;background:#fff8e1;"
+                "border:1px solid #ffe082;border-radius:6px;")
+            root.addWidget(lbl_prep)
+
         cols = ["Item", "Preço de venda", "Custo antes", "Custo depois",
                 "Lucro antes", "Lucro depois", "CMV c/ MO antes",
                 "CMV c/ MO depois"]
@@ -843,7 +1239,9 @@ class DialogoSimulacao(QDialog):
             tab.insertRow(i)
             f_antes = banco.FAIXAS[l["faixa_antes"]]
             f_depois = banco.FAIXAS[l["faixa_depois"]]
-            vals = [l["nome"], banco.fmt_moeda(l["preco"]),
+            nome = l["nome"] if l.get("direto", True) else (
+                f"{l['nome']}  (pelo {', '.join(l.get('por') or ['preparo'])})")
+            vals = [nome, banco.fmt_moeda(l["preco"]),
                     banco.fmt_moeda(l["custo_antes"]),
                     banco.fmt_moeda(l["custo_depois"]),
                     banco.fmt_moeda(l["margem_antes"]),
@@ -1249,6 +1647,8 @@ class AbaAnalise(QWidget):
         self._cb_insumo.blockSignals(True)
         self._cb_insumo.clear()
         for (iid, nome, un_c, preco, _un_u, _qtd, _f, _a, tipo) in banco.listar_insumos():
+            if tipo == banco.TIPO_PREPARO:
+                continue     # o preço do purê não se digita: vem da receita
             self._cb_insumo.addItem(
                 f"{ICONES_TIPO.get(tipo, '')} {nome}  "
                 f"({banco.fmt_moeda(preco)}/{un_c})", iid)
@@ -1497,6 +1897,7 @@ class MainWindow(QMainWindow):
 
         self._aba_insumos = AbaCadastro(banco.TIPO_INSUMO,
                                         ao_mudar=self._atualizar_tudo)
+        self._aba_casa = AbaFeitoNaCasa(ao_mudar=self._atualizar_tudo)
         self._aba_mao_obra = AbaCadastro(banco.TIPO_MAO_OBRA,
                                          ao_mudar=self._atualizar_tudo)
         self._aba_cardapio = AbaCardapio(ao_mudar=self._atualizar_tudo)
@@ -1507,6 +1908,7 @@ class MainWindow(QMainWindow):
 
         self._tabs = QTabWidget()
         self._tabs.addTab(self._aba_insumos, "  Insumos  ")
+        self._tabs.addTab(self._aba_casa, "  Feito na Casa  ")
         self._tabs.addTab(self._aba_mao_obra, "  Mão de obra  ")
         self._tabs.addTab(self._aba_cardapio, "  Cardápio  ")
         self._tabs.addTab(self._aba_analise, "  Análise  ")
@@ -1520,6 +1922,7 @@ class MainWindow(QMainWindow):
     def _atualizar_tudo(self):
         """Mudou um insumo ou uma ficha: recalcula o que depende disso."""
         self._aba_insumos.recarregar()
+        self._aba_casa.recarregar()
         self._aba_mao_obra.recarregar()
         self._aba_cardapio.recarregar()
         self._aba_analise.recarregar()

@@ -23,10 +23,17 @@ Um único conceito resolve cozinha e bar:
 | Barril de chopp | 50 L — R$ 400,00 | 150 copos | **R$ 2,67/copo** |
 | Long neck | 1 un — R$ 4,10 | 1 unidade | **R$ 4,10/un** |
 | Montador | 1 dia — R$ 100,00 | 50 pratos montados | **R$ 2,00/prato** |
+| Purê de batata | 1 receita — R$ 21,10 | 2.200 g de purê | **R$ 0,0096/g** |
 
 A "quantidade útil" já embute a perda — limpeza, cozimento, espuma do chopp.
 E como a **mão de obra** obedece à mesma conta, ela entra na ficha técnica do
 prato igual a um ingrediente: *1 prato de montador, 1 prato de cozinheiro*.
+
+O mesmo vale para o que você **faz na casa**. O purê leva batata, leite e
+manteiga: a receita custa R$ 21,10 e rende 2.200 g, então cada grama de purê
+custa R$ 0,0096 — e ele entra no prato como qualquer ingrediente. Se a batata
+subir, o purê sobe junto, e o programa mostra quais pratos pioraram mesmo sem
+terem batata na ficha.
 
 ## Como rodar
 
@@ -72,6 +79,8 @@ você mandar aplicar o preço.
 - ✅ **Insumos** — cadastro com cálculo do custo real ao vivo
 - ✅ **Mão de obra** — montador, cozinheiro e quantos mais precisar, com as
   unidades de medida editáveis por você (⚙ ao lado de cada lista)
+- ✅ **Feito na casa** — purê, molho, farofa: o que você produz e usa em vários
+  pratos. Monte a receita e o custo por grama se forma sozinho
 - ✅ **Cardápio** — ficha técnica com custo, margem e CMV se formando na tela
 - ✅ **Análise** — ranking de margem, alerta dos itens com lucro baixo e a
   simulação de aumento de preço

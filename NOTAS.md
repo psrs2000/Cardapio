@@ -47,11 +47,16 @@ simplificou tudo:
 | Chopp | barril — R$ 400,00 | 150 copos | R$ 2,67/copo |
 | Revenda pura | long neck, 1 un — R$ 4,10 | 1 un | R$ 4,10/un |
 | **Mão de obra** | montador, 1 dia — R$ 100,00 | 50 pratos | R$ 2,00/prato |
+| **Feito na casa** | purê, 1 receita — R$ 21,10 | 2.200 g | R$ 0,0096/g |
 
 **Não crie estruturas separadas** para bebida, comida e mão de obra — a
 unificação é o que mantém o programa simples. A mão de obra entrou como uma
 linha da mesma tabela `insumos`, com `tipo = 'Mão de obra'`, e é lançada na
-ficha técnica igual a um ingrediente: *1 prato de montador*.
+ficha técnica igual a um ingrediente: *1 prato de montador*. O **Feito na
+casa** (purê, molho, farofa) entrou do mesmo jeito, com `tipo = 'Feito na
+casa'`: a única diferença é que o preço dele **não se digita** — é a soma da
+receita, guardada em `ficha_preparo`. Dividir o custo da panela pelo que ela
+rende é, de novo, `preço ÷ quantidade útil`.
 
 ## Decisões já tomadas (e por quê)
 
@@ -105,6 +110,26 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
   *Arquivos de Programas*: os dados nascem ao lado dele e o Windows bloqueia
   escrita ali. Testado empacotando de verdade — o banco é criado na pasta do
   executável, que é o que `_app_dir()` promete.
+- **O custo virou uma cadeia, e o cálculo mudou de forma**: com o purê, o
+  custo de um insumo pode depender de outros insumos, que podem depender de
+  outros. `custos_unitarios()` resolve tudo de uma vez em memória, e é dele
+  que saem ficha, análise e simulação. A conta direta que existia antes não
+  servia mais: ela só enxergava um passo.
+  - **Insumo e mão de obra viajam separados** por toda a cadeia. Se somasse
+    tudo num número só, o cozinheiro lançado na receita do purê chegaria ao
+    prato disfarçado de ingrediente e sujaria o CMV — que existe justamente
+    para medir insumo.
+  - **`preco_compra` do preparo é cópia, não fonte.** A verdade é a soma da
+    receita; a coluna existe só para as listas mostrarem o número sem refazer
+    a conta. Por isso `recalcular_preparos()` é chamada depois de toda
+    alteração — e ao abrir o banco, para o caso de alguém ter mexido fora.
+  - **Volta é barrada na hora de adicionar** (`criaria_volta`): purê dentro de
+    molho dentro de purê faria o custo depender de si mesmo. O resolvedor
+    ainda devolve zero se topar com uma, para nunca travar calculando.
+  - **A simulação recalcula em vez de somar diferença**: com `precos_novos`,
+    o cardápio inteiro é refeito com o preço hipotético. É o que faz o PF de
+    Boi aparecer quando a batata sobe, sem ter batata na ficha — a tela diz
+    *(pelo Purê de batata)*.
 - **Senha e backup vieram prontos do Fluxo de Caixa** (SHA-256 com salt em
   `config.json`, backup ao fechar com rotação de 10, `_app_dir()` para achar a
   pasta certa quando virar `.exe`). Não reinventar o que o projeto irmão já
@@ -130,6 +155,8 @@ ficha técnica igual a um ingrediente: *1 prato de montador*.
 - ✅ Aba **Insumos** — cadastro com o custo real calculado ao vivo
 - ✅ Aba **Mão de obra** — montador, cozinheiro e quantos mais precisar, pela
   mesma conta (R$ 100 por dia ÷ 50 pratos = R$ 2,00 por prato)
+- ✅ Aba **Feito na Casa** — purê, molho, farofa: monta a receita, o custo por
+  grama se forma sozinho e ele entra nos pratos como ingrediente
 - ✅ **Unidades editáveis** pelo dono, nas duas abas de cadastro
 - ✅ Aba **Configurações** — senha de acesso, backup (manual e automático ao
   fechar) e os limites das cores
@@ -150,8 +177,9 @@ frente é proteção do dado (backup, senha) e conveniência (impressão).
 4. ✅ **Mão de obra**: cadastro próprio e lançamento na ficha; CMV, CMV com
    mão de obra e lucro lado a lado na Análise; unidades editáveis
 5. ✅ **Backup automático e senha** (mesma solução do projeto Fluxo de Caixa)
-6. Impressão da ficha para a cozinha — **é o próximo**
-7. (Futuro) Self-service por quilo
+6. ✅ **Feito na casa** (veio do uso: o purê é insumo e é receita ao mesmo tempo)
+7. Impressão da ficha para a cozinha — **é o próximo**
+8. (Futuro) Self-service por quilo
 
 ### Como a aba Análise ficou
 

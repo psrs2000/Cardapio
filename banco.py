@@ -12,10 +12,18 @@ mão de obra, que é a mesma conta:
     cachaça   : 1 garrafa R$ 25,00 rende 20 doses    → R$ 1,25 por dose
     long neck : 1 un por R$ 4,10   rende 1 un        → R$ 4,10 por un
     montador  : 1 dia por R$ 100   monta 50 pratos   → R$ 2,00 por prato
+    purê      : 1 receita R$ 21,10  rende 2.200 g     → R$ 0,0096 por g
 
 A "quantidade útil" já embute a perda (limpeza, cozimento, espuma do chopp).
 Por isso mão de obra NÃO tem tabela própria: é uma linha de `insumos` com
 tipo = 'Mão de obra', e entra na ficha técnica como qualquer ingrediente.
+
+O FEITO NA CASA (purê, molho, farofa — o que a casa produz e usa em vários
+pratos; no código, "preparo")
+segue exatamente a mesma fórmula; o que muda é de onde vem o preço: em vez de
+digitado, ele é a soma da ficha do próprio preparo. Um preparo é, portanto,
+uma linha de `insumos` com tipo = 'Feito na casa', cuja ficha mora em
+`ficha_preparo` e cujo `preco_compra` é calculado, nunca digitado.
 O que muda é só a leitura: o CMV continua sendo dos insumos (para bater com
 a régua de 30–35% do ramo) e a mão de obra sai do lucro.
 """
@@ -54,8 +62,12 @@ MAX_BACKUPS = 10
 
 # os dois tipos de custo — mesma tabela, mesma conta, leitura diferente
 TIPO_INSUMO = "Insumo"
+TIPO_PREPARO = "Feito na casa"
 TIPO_MAO_OBRA = "Mão de obra"
-TIPOS = [TIPO_INSUMO, TIPO_MAO_OBRA]
+TIPOS = [TIPO_INSUMO, TIPO_PREPARO, TIPO_MAO_OBRA]
+
+# a "compra" de um preparo é sempre uma receita dele; não se digita
+UNIDADE_COMPRA_PREPARO = "receita"
 
 # os dois campos de unidade de um cadastro
 CAMPO_COMPRA = "compra"
@@ -72,11 +84,16 @@ UNIDADES_USO = ["g", "ml", "un", "dose", "copo", "fatia", "porção"]
 UNIDADES_COMPRA_MO = ["dia", "hora", "turno", "semana", "mês", "serviço"]
 UNIDADES_USO_MO = ["prato", "porção", "un", "item", "kg", "hora"]
 
+# preparo: compra-se uma receita e ela "rende" o que sai da panela
+UNIDADES_USO_PREPARO = ["g", "ml", "un", "porção", "fatia", "concha"]
+
 UNIDADES_DE_FABRICA = {
     (TIPO_INSUMO, CAMPO_COMPRA): UNIDADES_COMPRA,
     (TIPO_INSUMO, CAMPO_USO): UNIDADES_USO,
     (TIPO_MAO_OBRA, CAMPO_COMPRA): UNIDADES_COMPRA_MO,
     (TIPO_MAO_OBRA, CAMPO_USO): UNIDADES_USO_MO,
+    (TIPO_PREPARO, CAMPO_COMPRA): [UNIDADE_COMPRA_PREPARO],
+    (TIPO_PREPARO, CAMPO_USO): UNIDADES_USO_PREPARO,
 }
 
 
@@ -240,6 +257,14 @@ def init_db():
     _limites_em_memoria = None
     con = conectar()
     con.execute("""
+        CREATE TABLE IF NOT EXISTS ficha_preparo (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            preparo_id INTEGER NOT NULL REFERENCES insumos(id) ON DELETE CASCADE,
+            insumo_id  INTEGER NOT NULL REFERENCES insumos(id) ON DELETE RESTRICT,
+            quantidade REAL    NOT NULL DEFAULT 0,
+            UNIQUE(preparo_id, insumo_id)
+        )""")
+    con.execute("""
         CREATE TABLE IF NOT EXISTS config (
             chave TEXT PRIMARY KEY,
             valor TEXT
@@ -297,6 +322,7 @@ def init_db():
                     " DEFAULT '%s'" % TIPO_INSUMO)
     con.commit()
     con.close()
+    recalcular_preparos()
 
 
 # ── formatação ────────────────────────────────────────────────────
@@ -595,7 +621,9 @@ def listar_insumos(tipo=None):
     if tipo:
         linhas = con.execute(sql + " WHERE tipo=? ORDER BY nome", (tipo,)).fetchall()
     else:
-        linhas = con.execute(sql + " ORDER BY tipo, nome").fetchall()
+        linhas = con.execute(
+            sql + " ORDER BY CASE tipo WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END,"
+                  " nome", (TIPO_INSUMO, TIPO_PREPARO)).fetchall()
     con.close()
     return linhas
 
@@ -634,22 +662,218 @@ def salvar_insumo(iid, nome, unidade_compra, preco_compra, unidade_uso,
         con.commit()
     finally:
         con.close()
+    if tipo != TIPO_PREPARO:
+        recalcular_preparos()      # mudou um preço: o que leva ele muda junto
     return iid
 
 
 def excluir_insumo(iid):
-    """Não deixa excluir insumo usado em alguma ficha (devolve a lista de itens)."""
+    """Não exclui o que está em uso — devolve onde está sendo usado.
+
+    Olha os dois lugares: as fichas dos pratos e as receitas do "Feito na
+    casa". A batata pode não estar em prato nenhum e ainda assim estar dentro
+    do purê.
+    """
     con = conectar()
-    usos = con.execute(
+    usos = [u[0] for u in con.execute(
         "SELECT i.nome FROM ficha f JOIN itens i ON i.id = f.item_id"
-        " WHERE f.insumo_id=? ORDER BY i.nome", (iid,)).fetchall()
+        " WHERE f.insumo_id=? ORDER BY i.nome", (iid,)).fetchall()]
+    usos += [f"{u[0]} (Feito na casa)" for u in con.execute(
+        "SELECT p.nome FROM ficha_preparo f JOIN insumos p ON p.id = f.preparo_id"
+        " WHERE f.insumo_id=? ORDER BY p.nome", (iid,)).fetchall()]
     if usos:
         con.close()
-        return [u[0] for u in usos]
+        return usos
+    con.execute("DELETE FROM ficha_preparo WHERE preparo_id=?", (iid,))
     con.execute("DELETE FROM insumos WHERE id=?", (iid,))
     con.commit()
     con.close()
+    recalcular_preparos()
     return []
+
+
+# ── o custo de tudo, resolvendo a cadeia ──────────────────────────
+def _zerado_tipo():
+    return {"insumos": 0.0, "mao_obra": 0.0}
+
+
+def custos_unitarios(precos_novos=None):
+    """{insumo_id: {'insumos': x, 'mao_obra': y}} — custo de UMA unidade de uso.
+
+    É o coração do programa desde que existe "Feito na casa": o custo do purê
+    sai da ficha dele, que pode conter outro preparo, que contém outro… Aqui a
+    cadeia inteira é resolvida de uma vez, em memória.
+
+    O custo vem separado em insumo e mão de obra o caminho todo. Sem isso, o
+    cozinheiro lançado na ficha do purê chegaria ao prato disfarçado de
+    ingrediente e sujaria o CMV — que existe justamente para medir insumo.
+
+    `precos_novos` ({insumo_id: preço}) recalcula tudo como se aquele insumo
+    custasse outra coisa: é o que faz a simulação enxergar "a batata subiu →
+    o purê subiu → estes pratos pioraram".
+    """
+    precos_novos = precos_novos or {}
+    con = conectar()
+    linhas = {iid: (tipo, preco, qtd) for iid, tipo, preco, qtd in con.execute(
+        "SELECT id, tipo, preco_compra, qtd_util FROM insumos")}
+    componentes = {}
+    for pid, iid, qtd in con.execute(
+            "SELECT preparo_id, insumo_id, quantidade FROM ficha_preparo"):
+        componentes.setdefault(pid, []).append((iid, qtd))
+    con.close()
+
+    pronto, calculando = {}, set()
+
+    def custo(iid):
+        if iid in pronto:
+            return pronto[iid]
+        if iid in calculando:
+            # volta (A dentro de B dentro de A). A tela impede que se crie uma,
+            # mas se um banco antigo trouxer, o programa devolve zero e segue
+            # em frente em vez de travar calculando para sempre.
+            return _zerado_tipo()
+        tipo, preco, qtd_util = linhas.get(iid, (TIPO_INSUMO, 0, 0))
+        if tipo == TIPO_PREPARO:
+            calculando.add(iid)
+            receita = _zerado_tipo()
+            for comp_id, quantidade in componentes.get(iid, []):
+                parcial = custo(comp_id)
+                receita["insumos"] += parcial["insumos"] * (quantidade or 0)
+                receita["mao_obra"] += parcial["mao_obra"] * (quantidade or 0)
+            calculando.discard(iid)
+            rende = float(qtd_util or 0)
+            resultado = ({"insumos": receita["insumos"] / rende,
+                          "mao_obra": receita["mao_obra"] / rende}
+                         if rende > 0 else _zerado_tipo())
+        else:
+            unitario = custo_unitario(precos_novos.get(iid, preco), qtd_util)
+            resultado = ({"insumos": 0.0, "mao_obra": unitario}
+                         if tipo == TIPO_MAO_OBRA
+                         else {"insumos": unitario, "mao_obra": 0.0})
+        pronto[iid] = resultado
+        return resultado
+
+    return {iid: custo(iid) for iid in linhas}
+
+
+def custo_da_receita(preparo_id, precos_novos=None):
+    """O que sai da panela: quanto custa fazer UMA receita do preparo."""
+    unitarios = custos_unitarios(precos_novos)
+    total = _zerado_tipo()
+    for comp_id, quantidade in _componentes_preparo(preparo_id):
+        parcial = unitarios.get(comp_id, _zerado_tipo())
+        total["insumos"] += parcial["insumos"] * (quantidade or 0)
+        total["mao_obra"] += parcial["mao_obra"] * (quantidade or 0)
+    total["total"] = total["insumos"] + total["mao_obra"]
+    return total
+
+
+def _componentes_preparo(preparo_id):
+    con = conectar()
+    linhas = con.execute(
+        "SELECT insumo_id, quantidade FROM ficha_preparo WHERE preparo_id=?",
+        (preparo_id,)).fetchall()
+    con.close()
+    return linhas
+
+
+def recalcular_preparos():
+    """Grava em `preco_compra` de cada preparo o custo de uma receita dele.
+
+    O valor de verdade é sempre a soma da ficha; esta cópia existe só para as
+    listas e combos mostrarem o número certo sem refazer a conta. Por isso é
+    chamada depois de toda alteração — nunca deixe de chamar ao mexer em
+    insumo, preço ou ficha de preparo.
+    """
+    unitarios = custos_unitarios()
+    con = conectar()
+    preparos = [r[0] for r in con.execute(
+        "SELECT id FROM insumos WHERE tipo=?", (TIPO_PREPARO,))]
+    componentes = {}
+    for pid, iid, qtd in con.execute(
+            "SELECT preparo_id, insumo_id, quantidade FROM ficha_preparo"):
+        componentes.setdefault(pid, []).append((iid, qtd))
+    for pid in preparos:
+        total = sum((unitarios.get(cid, _zerado_tipo())["insumos"] +
+                     unitarios.get(cid, _zerado_tipo())["mao_obra"]) * (q or 0)
+                    for cid, q in componentes.get(pid, []))
+        con.execute("UPDATE insumos SET preco_compra=? WHERE id=?", (total, pid))
+    con.commit()
+    con.close()
+
+
+# ── ficha do "Feito na casa" ──────────────────────────────────────
+def listar_ficha_preparo(preparo_id):
+    """O que entra em uma receita do preparo, com o custo de cada linha."""
+    con = conectar()
+    linhas = con.execute("""
+        SELECT f.id, f.insumo_id, ins.nome, f.quantidade, ins.unidade_uso, ins.tipo
+          FROM ficha_preparo f JOIN insumos ins ON ins.id = f.insumo_id
+         WHERE f.preparo_id = ?
+         ORDER BY CASE ins.tipo WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, ins.nome
+    """, (preparo_id, TIPO_INSUMO, TIPO_PREPARO)).fetchall()
+    con.close()
+    unitarios = custos_unitarios()
+    saida = []
+    for fid, insumo_id, nome, qtd, un_uso, tipo in linhas:
+        parcial = unitarios.get(insumo_id, _zerado_tipo())
+        cu = parcial["insumos"] + parcial["mao_obra"]
+        saida.append({"ficha_id": fid, "insumo_id": insumo_id, "insumo": nome,
+                      "quantidade": qtd, "unidade": un_uso, "tipo": tipo,
+                      "custo_unitario": cu, "custo": cu * (qtd or 0),
+                      "custo_insumos": parcial["insumos"] * (qtd or 0),
+                      "custo_mao_obra": parcial["mao_obra"] * (qtd or 0)})
+    return saida
+
+
+def criaria_volta(preparo_id, componente_id) -> bool:
+    """Pôr este componente dentro deste preparo faria uma volta?
+
+    Purê dentro de molho dentro de purê: o custo passaria a depender de si
+    mesmo. Barrado na hora de adicionar, que é onde dá para explicar.
+    """
+    if not preparo_id or componente_id == preparo_id:
+        return True
+    con = conectar()
+    ligacoes = {}
+    for pid, iid in con.execute("SELECT preparo_id, insumo_id FROM ficha_preparo"):
+        ligacoes.setdefault(pid, []).append(iid)
+    con.close()
+    a_visitar, vistos = [componente_id], set()
+    while a_visitar:
+        atual = a_visitar.pop()
+        if atual == preparo_id:
+            return True
+        if atual in vistos:
+            continue
+        vistos.add(atual)
+        a_visitar.extend(ligacoes.get(atual, []))
+    return False
+
+
+def salvar_componente_preparo(preparo_id, insumo_id, quantidade):
+    """Põe (ou corrige) um item na receita. Devolve erro, ou '' se deu certo."""
+    if criaria_volta(preparo_id, insumo_id):
+        return ("Isso faria uma volta: este item já depende do preparo que "
+                "você está montando, e o custo passaria a depender de si mesmo.")
+    con = conectar()
+    con.execute(
+        "INSERT INTO ficha_preparo (preparo_id, insumo_id, quantidade)"
+        " VALUES (?,?,?) ON CONFLICT(preparo_id, insumo_id)"
+        " DO UPDATE SET quantidade=excluded.quantidade",
+        (preparo_id, insumo_id, quantidade))
+    con.commit()
+    con.close()
+    recalcular_preparos()
+    return ""
+
+
+def excluir_componente_preparo(ficha_id):
+    con = conectar()
+    con.execute("DELETE FROM ficha_preparo WHERE id=?", (ficha_id,))
+    con.commit()
+    con.close()
+    recalcular_preparos()
 
 
 # ── itens do cardápio e fichas ────────────────────────────────────
@@ -692,18 +916,22 @@ def listar_ficha(item_id):
     """Componentes do item, já com o custo calculado de cada linha."""
     con = conectar()
     linhas = con.execute("""
-        SELECT f.id, f.insumo_id, ins.nome, f.quantidade, ins.unidade_uso,
-               ins.preco_compra, ins.qtd_util, ins.tipo
+        SELECT f.id, f.insumo_id, ins.nome, f.quantidade, ins.unidade_uso, ins.tipo
           FROM ficha f JOIN insumos ins ON ins.id = f.insumo_id
          WHERE f.item_id = ?
-         ORDER BY ins.tipo, ins.nome""", (item_id,)).fetchall()
+         ORDER BY CASE ins.tipo WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END, ins.nome
+    """, (item_id, TIPO_INSUMO, TIPO_PREPARO)).fetchall()
     con.close()
+    unitarios = custos_unitarios()
     saida = []
-    for fid, insumo_id, nome, qtd, un_uso, preco, qtd_util, tipo in linhas:
-        cu = custo_unitario(preco, qtd_util)
+    for fid, insumo_id, nome, qtd, un_uso, tipo in linhas:
+        parcial = unitarios.get(insumo_id, _zerado_tipo())
+        cu = parcial["insumos"] + parcial["mao_obra"]
         saida.append({"ficha_id": fid, "insumo_id": insumo_id, "insumo": nome,
                       "quantidade": qtd, "unidade": un_uso, "tipo": tipo,
-                      "custo_unitario": cu, "custo": cu * (qtd or 0)})
+                      "custo_unitario": cu, "custo": cu * (qtd or 0),
+                      "custo_insumos": parcial["insumos"] * (qtd or 0),
+                      "custo_mao_obra": parcial["mao_obra"] * (qtd or 0)})
     return saida
 
 
@@ -725,11 +953,16 @@ def excluir_componente(ficha_id):
 
 
 def custos_do_item(item_id):
-    """{'insumos': x, 'mao_obra': y, 'total': x + y} de um item."""
+    """{'insumos': x, 'mao_obra': y, 'total': x + y} de um item.
+
+    A mão de obra que veio de dentro de um preparo continua contada como mão
+    de obra aqui — o purê chega ao prato já sabendo quanto dele é ingrediente
+    e quanto é gente trabalhando.
+    """
     parcial = {"insumos": 0.0, "mao_obra": 0.0}
     for c in listar_ficha(item_id):
-        alvo = "mao_obra" if c["tipo"] == TIPO_MAO_OBRA else "insumos"
-        parcial[alvo] += c["custo"]
+        parcial["insumos"] += c["custo_insumos"]
+        parcial["mao_obra"] += c["custo_mao_obra"]
     parcial["total"] = parcial["insumos"] + parcial["mao_obra"]
     return parcial
 
@@ -739,21 +972,23 @@ def custo_do_item(item_id) -> float:
     return custos_do_item(item_id)["total"]
 
 
-def custos_por_item():
-    """{item_id: {'insumos','mao_obra','total'}} — o cardápio em uma consulta."""
+def custos_por_item(precos_novos=None):
+    """{item_id: {'insumos','mao_obra','total'}} — o cardápio inteiro de uma vez.
+
+    `precos_novos` responde "como ficaria se este insumo custasse outra coisa",
+    já atravessando os preparos que o usam.
+    """
+    unitarios = custos_unitarios(precos_novos)
     con = conectar()
-    linhas = con.execute("""
-        SELECT f.item_id, ins.tipo,
-               SUM(f.quantidade * ins.preco_compra /
-                   CASE WHEN ins.qtd_util > 0 THEN ins.qtd_util END)
-          FROM ficha f JOIN insumos ins ON ins.id = f.insumo_id
-         GROUP BY f.item_id, ins.tipo""").fetchall()
+    linhas = con.execute(
+        "SELECT item_id, insumo_id, quantidade FROM ficha").fetchall()
     con.close()
     saida = {}
-    for iid, tipo, custo in linhas:
-        p = saida.setdefault(iid, {"insumos": 0.0, "mao_obra": 0.0, "total": 0.0})
-        alvo = "mao_obra" if tipo == TIPO_MAO_OBRA else "insumos"
-        p[alvo] += float(custo or 0.0)
+    for item_id, insumo_id, quantidade in linhas:
+        parcial = unitarios.get(insumo_id, _zerado_tipo())
+        p = saida.setdefault(item_id, _zerado())
+        p["insumos"] += parcial["insumos"] * (quantidade or 0)
+        p["mao_obra"] += parcial["mao_obra"] * (quantidade or 0)
         p["total"] = p["insumos"] + p["mao_obra"]
     return saida
 
@@ -823,35 +1058,56 @@ def simular_preco_insumo(insumo_id, novo_preco):
 
     Responde a pergunta mais valiosa do programa — "a carne subiu, quais
     pratos ficaram com lucro ruim?" — sem gravar nada no banco. Serve igual
-    para mão de obra: "e se o montador passar a custar R$ 120 por dia?".
-    Devolve uma linha por item afetado, com o antes e o depois, do pior
-    resultado para o melhor.
+    para mão de obra ("e se o montador passar a custar R$ 120 por dia?") e
+    atravessa o "Feito na casa": a batata sobe, o purê sobe junto, e os pratos
+    que levam purê aparecem aqui mesmo sem ter batata na ficha.
+
+    Devolve uma linha por item afetado, do pior resultado para o melhor, com
+    `direto` e `por` dizendo se a mudança chegou direto ou por um preparo.
     """
     ins = obter_insumo(insumo_id)
     if not ins:
         return []
-    _id, _nome, _un_compra, preco_atual, unidade_uso, qtd_util, _forn, _atu, tipo = ins
-    delta = custo_unitario(novo_preco, qtd_util) - custo_unitario(preco_atual, qtd_util)
-    alvo = "mao_obra" if tipo == TIPO_MAO_OBRA else "insumos"
+    unidade_uso, tipo = ins[4], ins[8]
+
+    antes_un = custos_unitarios()
+    depois_un = custos_unitarios({insumo_id: novo_preco})
+    antes_itens = custos_por_item()
+    depois_itens = custos_por_item({insumo_id: novo_preco})
+
+    def mudou(comp_id):
+        a, d = antes_un.get(comp_id, _zerado_tipo()), depois_un.get(comp_id, _zerado_tipo())
+        return abs((a["insumos"] + a["mao_obra"]) - (d["insumos"] + d["mao_obra"])) > 1e-12
 
     con = conectar()
-    linhas = con.execute(
-        "SELECT f.item_id, i.nome, i.categoria, i.preco_venda, f.quantidade"
-        "  FROM ficha f JOIN itens i ON i.id = f.item_id"
-        " WHERE f.insumo_id = ?", (insumo_id,)).fetchall()
+    itens = con.execute(
+        "SELECT id, nome, categoria, preco_venda FROM itens").fetchall()
+    componentes = {}
+    for item_id, comp_id, qtd in con.execute(
+            "SELECT item_id, insumo_id, quantidade FROM ficha"):
+        componentes.setdefault(item_id, []).append((comp_id, qtd))
+    nomes = dict(con.execute("SELECT id, nome FROM insumos"))
     con.close()
 
-    custos = custos_por_item()
     saida = []
-    for item_id, nome, categoria, preco_venda, qtd in linhas:
-        c = custos.get(item_id, _zerado())
-        depois = dict(c)
-        depois[alvo] = c[alvo] + delta * float(qtd or 0)
+    for item_id, nome, categoria, preco_venda in itens:
+        c = antes_itens.get(item_id, _zerado())
+        d = depois_itens.get(item_id, _zerado())
+        if abs(c["total"] - d["total"]) < 1e-9:
+            continue                       # este prato não sente a mudança
         antes = avaliar(preco_venda, c["insumos"], c["mao_obra"])
-        dep = avaliar(preco_venda, depois["insumos"], depois["mao_obra"])
+        dep = avaliar(preco_venda, d["insumos"], d["mao_obra"])
+        # por onde a mudança chegou: direto na ficha, ou dentro de um preparo
+        direto, quantidade, por = False, 0.0, []
+        for comp_id, qtd in componentes.get(item_id, []):
+            if comp_id == insumo_id:
+                direto, quantidade = True, float(qtd or 0)
+            elif mudou(comp_id):
+                por.append(nomes.get(comp_id, ""))
         saida.append({"id": item_id, "nome": nome, "categoria": categoria,
-                      "preco": antes["preco"], "quantidade": float(qtd or 0),
+                      "preco": antes["preco"], "quantidade": quantidade,
                       "unidade": unidade_uso, "tipo": tipo,
+                      "direto": direto, "por": por,
                       "custo_antes": antes["custo"], "custo_depois": dep["custo"],
                       "margem_antes": antes["margem"], "margem_depois": dep["margem"],
                       "cmv_antes": antes["cmv"], "cmv_depois": dep["cmv"],
@@ -864,10 +1120,28 @@ def simular_preco_insumo(insumo_id, novo_preco):
     return saida
 
 
+def preparos_afetados(insumo_id, novo_preco):
+    """Os "Feito na casa" que mudam de custo se este insumo mudar de preço."""
+    antes, depois = custos_unitarios(), custos_unitarios({insumo_id: novo_preco})
+    con = conectar()
+    preparos = con.execute(
+        "SELECT id, nome, unidade_uso FROM insumos WHERE tipo=? ORDER BY nome",
+        (TIPO_PREPARO,)).fetchall()
+    con.close()
+    saida = []
+    for pid, nome, unidade in preparos:
+        a, d = antes.get(pid, _zerado_tipo()), depois.get(pid, _zerado_tipo())
+        ca, cd = a["insumos"] + a["mao_obra"], d["insumos"] + d["mao_obra"]
+        if abs(ca - cd) > 1e-12:
+            saida.append({"id": pid, "nome": nome, "unidade": unidade,
+                          "antes": ca, "depois": cd})
+    return saida
+
+
 def custo_unitario_do_insumo(insumo_id) -> float:
-    """Custo real de 1 unidade de uso do insumo, como está gravado hoje."""
-    ins = obter_insumo(insumo_id)
-    return custo_unitario(ins[3], ins[5]) if ins else 0.0
+    """Custo real de 1 unidade de uso — resolvendo o preparo, se for um."""
+    parcial = custos_unitarios().get(insumo_id)
+    return (parcial["insumos"] + parcial["mao_obra"]) if parcial else 0.0
 
 
 def itens_com_mao_de_obra(insumo_id=None):
