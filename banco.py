@@ -15,17 +15,18 @@ mão de obra, que é a mesma conta:
     purê      : 1 receita R$ 21,10  rende 2.200 g     → R$ 0,0096 por g
 
 A "quantidade útil" já embute a perda (limpeza, cozimento, espuma do chopp).
-Por isso mão de obra NÃO tem tabela própria: é uma linha de `insumos` com
-tipo = 'Mão de obra', e entra na ficha técnica como qualquer ingrediente.
 
-O FEITO NA CASA (purê, molho, farofa — o que a casa produz e usa em vários
-pratos; no código, "preparo")
-segue exatamente a mesma fórmula; o que muda é de onde vem o preço: em vez de
-digitado, ele é a soma da ficha do próprio preparo. Um preparo é, portanto,
-uma linha de `insumos` com tipo = 'Feito na casa', cuja ficha mora em
-`ficha_preparo` e cujo `preco_compra` é calculado, nunca digitado.
-O que muda é só a leitura: o CMV continua sendo dos insumos (para bater com
-a régua de 30–35% do ramo) e a mão de obra sai do lucro.
+Nada disso tem tabela própria: os três são linhas da mesma tabela `insumos`,
+separados por `tipo`, e todos entram na ficha técnica como ingredientes.
+
+    'Insumo'        preço digitado
+    'Mão de obra'   preço digitado (o que se paga ÷ o que a pessoa produz)
+    'Feito na casa' preço CALCULADO: a soma da receita dele, que mora em
+                    `ficha_preparo`, dividida pelo que a receita rende
+
+O que muda é a leitura, não o cálculo: o CMV continua sendo só dos insumos
+(para bater com a régua de 30–35% do ramo) e a mão de obra sai do lucro —
+inclusive a que estiver dentro de um "Feito na casa".
 """
 
 import os
@@ -178,7 +179,14 @@ def pasta_backup_auto() -> str:
 
 
 def backup_automatico_ligado() -> bool:
-    return bool(cfg_load().get("backup_auto"))
+    """Ligado até que o dono desligue.
+
+    O padrão é ligado de propósito: quem não tem intimidade com informática
+    não vai procurar uma caixa para marcar, e a primeira semana de uso — com
+    o cadastro sendo digitado do zero — é justamente quando perder o arquivo
+    doeria mais. Desligar é um clique; descobrir que não havia cópia, não.
+    """
+    return bool(cfg_load().get("backup_auto", True))
 
 
 def ligar_backup_automatico(ligado):

@@ -1763,7 +1763,8 @@ class AbaConfiguracoes(QWidget):
         linha_man.addStretch()
         fb.addLayout(linha_man)
 
-        self._chk_auto = QCheckBox("Fazer backup automático ao fechar o programa")
+        self._chk_auto = QCheckBox("Fazer backup automático ao fechar o programa"
+                                  "  (recomendado)")
         self._chk_auto.toggled.connect(self._ligar_auto)
         fb.addWidget(self._chk_auto)
 
